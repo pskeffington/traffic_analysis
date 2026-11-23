@@ -59,8 +59,8 @@ No test suite was run in this task; the repository instruction forbids running t
 
 ## Handoff evidence
 
-- **Code candidate checked:** draft PR [#1](https://github.com/pskeffington/traffic_analysis/pull/1), source commit `8f6a93b5ac822e51b72a39a177355aa6d129798c`; this evidence note is a subsequent documentation update.
+- **Code candidate checked:** draft PR [#1](https://github.com/pskeffington/traffic_analysis/pull/1), current code commit `543d1730d0897ae601f67f8f5763c29ab6fb0c09`.
 - **Changed paths:** `README.md`, `src/traffic_analysis/store.py`, `docs/PRODUCTION_PLAN.md`.
 - **Commands/results:** `git diff --check` — exit 0; `PYTHONPATH=src python3 -m py_compile src/traffic_analysis/*.py` — exit 0; `PYTHONPATH=src python3 -m traffic_analysis.cli --help` — exit 0.
-- **Tests/reviews:** tests not run per `AGENTS.md`; an independent code review identified stale-provenance import handling and M0 event-review wording. Those findings are being corrected; security and release reviews remain unperformed. No independent approval is claimed for the revised candidate.
-- **Stage result:** M0 prototype remains **PASS** for static checks; review findings require re-review before release. M1/M2/M5 remain **BLOCKED** as specified above. **Next owner:** Traffic Analysis implementer for the bounded review fixes, then TRANS contract and canonical registry owners for RAD-002.
+- **Tests/reviews:** tests not run per `AGENTS.md`. Independent code review of the revised import/provenance safeguards **PASS** (bounded review of `store.py`, content SHA `c35213840b7fda9504440febef7b722344b44699`); no tests were run by the reviewer. Security and release reviews remain unperformed.
+- **Stage result:** M0 prototype **PASS** for static checks and bounded independent code review. M1/M2/M5 remain **BLOCKED** as specified above. **Next owner:** TRANS contract and canonical registry owners for RAD-002; Traffic Analysis resumes once that interface and the requested shared data path are cleared.
