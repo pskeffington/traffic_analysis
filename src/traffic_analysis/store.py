@@ -186,7 +186,14 @@ def _read_trans_db(path: Path) -> tuple[sqlite3.Connection, set[str], set[str]]:
 
 def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
     source, transcript_cols, segment_cols = _read_trans_db(trans_path)
-    counts = {"imported": 0, "unchanged": 0, "events": 0}
+    counts = {
+        "imported": 0,
+        "unchanged": 0,
+        "speech": 0,
+        "audible_events": 0,
+        "uncertain": 0,
+        "source_pending": 0,
+    }
     content_sql = "g.content_kind" if "content_kind" in segment_cols else "'uncertain'"
     confidence_sql = "g.confidence" if "confidence" in segment_cols else "NULL"
     confidence_method_sql = (
@@ -215,6 +222,8 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
             source_review = row["review_status"]
             if source_review not in {"pending", "accepted", "corrected", "rejected"}:
                 raise ValueError("trans_review_state_unknown")
+            counts[kind] += 1
+            counts["source_pending"] += source_review == "pending"
             profile = (row["profile_name"], row["profile_version"])
             segment_id = str(row["sequence"])
             key = (row["source_id"], *profile, segment_id)
@@ -269,21 +278,7 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
                    source_review_status) VALUES(?,?,?,?,?,?,?,?)""",
                   (row["source_id"], *profile, segment_id, text, row["start_ms"],
                    row["end_ms"], source_review))
-                counts["events"] += 1
-            if kind == "speech":
-                contact = radio_contact(text)
-                if contact:
-                    origin, addressee, pattern = contact
-                    candidate_id = _digest_id(*key, origin, addressee, pattern)
-                    db.execute("""INSERT OR IGNORE INTO connection_candidates
-                      (candidate_id,source_id,call_id,profile_name,profile_version,segment_id,
-                       source_entity_id,target_entity_id,source_identifier,target_identifier,
-                       relationship,extraction_pattern,review_state,created_at)
-                      VALUES(?,?,?,?,?,?,?,?,?,?,'RADIO_CONTACT',?,'pending',?)""",
-                      (candidate_id, row["source_id"], row["call_id"], *profile, segment_id,
-                       _radio_entity_id(row["call_id"], origin),
-                       _radio_entity_id(row["call_id"], addressee), origin, addressee,
-                       pattern, now))
+                counts["audible_events"] += 1
             counts["imported"] += 1
         db.commit()
         return counts
@@ -331,11 +326,17 @@ def review_candidate(db: sqlite3.Connection, candidate_id: str, state: str,
         raise ValueError("review_state_must_be_accepted_or_rejected")
     if not reviewer.strip():
         raise ValueError("reviewer_required")
-    updated = db.execute("""UPDATE connection_candidates
+    candidate = db.execute("""SELECT s.source_review_status
+       FROM connection_candidates c JOIN transcript_segments s
+       USING(source_id,profile_name,profile_version,segment_id)
+       WHERE c.candidate_id=?""", (candidate_id,)).fetchone()
+    if candidate is None:
+        raise ValueError("candidate_not_found")
+    if state == "accepted" and candidate["source_review_status"] not in {"accepted", "corrected"}:
+        raise ValueError("trans_segment_not_accepted_by_trans")
+    db.execute("""UPDATE connection_candidates
        SET review_state=?,reviewer=?,analyst_note=?,reviewed_at=? WHERE candidate_id=?""",
        (state, reviewer.strip(), note.strip(), _utc_now(), candidate_id))
-    if not updated.rowcount:
-        raise ValueError("candidate_not_found")
     db.commit()
 
 
