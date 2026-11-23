@@ -228,11 +228,19 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
             segment_id = str(row["sequence"])
             key = (row["source_id"], *profile, segment_id)
             existing = db.execute(
-                "SELECT text_sha256,transcript_sha256,provenance_sha256,content_kind,"
-                "source_review_status FROM transcript_segments "
+                "SELECT call_id,started_at,start_ms,end_ms,text_sha256,transcript_sha256,"
+                "provenance_sha256,content_kind,source_review_status,confidence,"
+                "confidence_method FROM transcript_segments "
                 "WHERE source_id=? AND profile_name=? AND profile_version=? AND segment_id=?", key
             ).fetchone()
             if existing:
+                if (existing["call_id"] != row["call_id"] or
+                    existing["started_at"] != row["started_at"] or
+                    existing["start_ms"] != row["start_ms"] or
+                    existing["end_ms"] != row["end_ms"] or
+                    existing["confidence"] != row["confidence"] or
+                    existing["confidence_method"] != row["confidence_method"]):
+                    raise ValueError("trans_source_metadata_changed_without_profile_version_change")
                 if existing["text_sha256"] != segment_sha:
                     raise ValueError("trans_segment_changed_without_profile_version_change")
                 if (existing["transcript_sha256"] != row["transcript_sha256"] or
