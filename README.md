@@ -55,3 +55,7 @@ The current TRANS audio SQL schema still fixes transcript review state to `pendi
 ## Development
 
 Python 3.11+; runtime uses only the standard library. Tests have not yet been added or run.
+
+## Production milestones
+
+See [the production plan](docs/PRODUCTION_PLAN.md) for TRANS review/schema dependencies, archive storage, Arch Notebook snapshot handoff, automation, and release gates.
