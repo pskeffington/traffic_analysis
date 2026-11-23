@@ -23,14 +23,17 @@ _FROM_PATTERN = re.compile(
 )
 
 _MESSAGE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("emergency_traffic", re.compile(r"\b(?:emergency traffic|urgent traffic)\b", re.I)),
     ("readback_or_acknowledgement", re.compile(
-        r"\b(?:roger|copy|wilco|affirmative|negative|10[- ]?4|received)\b", re.I)),
+        r"\b(?:roger|cop(?:y|ies)|wilco|affirmative|negative|10[- ]?4|received)\b", re.I)),
     ("repeat_or_correction", re.compile(
         r"\b(?:say again|repeat|correction|scratch that|disregard)\b", re.I)),
     ("hold_or_wait", re.compile(r"\b(?:stand by|wait one|hold traffic)\b", re.I)),
     ("status_update", re.compile(
-        r"\b(?:en\s+route|on scene|arrived|in service|out of service|"
-        r"available|unavailable|transporting|clear(?: of| from)? scene)\b", re.I)),
+        r"\b(?:en[- ]?route|responding|on scene|at scene|arrived|in service|"
+        r"out of service|available|unavailable|transporting|"
+        r"clear(?:ed)?(?: of| from)? scene|returning(?: to station)?|back at station|"
+        r"all clear|under control)\b", re.I)),
     ("handoff_or_channel_change", re.compile(
         r"\b(?:switch(?:ing)? (?:to )?(?:channel|frequency)|"
         r"change (?:to )?(?:channel|frequency)|hand(?:ing)? off)\b", re.I)),
@@ -44,10 +47,8 @@ def normalize_identifier(value: str) -> str:
 
 
 def classify_message(text: str) -> str:
-    for kind, pattern in _MESSAGE_PATTERNS:
-        if pattern.search(text):
-            return kind
-    return "other_or_unclassified"
+    matches = [kind for kind, pattern in _MESSAGE_PATTERNS if pattern.search(text)]
+    return ";".join(matches) if matches else "other_or_unclassified"
 
 
 def radio_contact(text: str) -> tuple[str, str, str] | None:

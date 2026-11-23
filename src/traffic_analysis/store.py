@@ -51,9 +51,12 @@ CREATE TABLE IF NOT EXISTS analysis_records (
 CREATE TABLE IF NOT EXISTS connection_candidates (
   candidate_id TEXT PRIMARY KEY,
   source_id TEXT NOT NULL,
+  call_id INTEGER NOT NULL,
   profile_name TEXT NOT NULL,
   profile_version TEXT NOT NULL,
   segment_id TEXT NOT NULL,
+  source_entity_id TEXT NOT NULL,
+  target_entity_id TEXT NOT NULL,
   source_identifier TEXT NOT NULL,
   target_identifier TEXT NOT NULL,
   relationship TEXT NOT NULL CHECK(relationship='RADIO_CONTACT'),
@@ -86,6 +89,8 @@ CREATE VIEW IF NOT EXISTS arch_notebook_connections AS
 SELECT c.candidate_id AS connection_id,
        c.source_identifier AS source,
        c.target_identifier AS target,
+       c.source_entity_id,
+       c.target_entity_id,
        'RADIO_CONTACT' AS relationship,
        COALESCE(s.occurred_at, '') AS date,
        1 AS confidence,
@@ -144,6 +149,11 @@ def open_store(path: Path) -> sqlite3.Connection:
 
 def _digest_id(*parts: str) -> str:
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
+def _radio_entity_id(call_id: int, identifier: str) -> str:
+    """Scope a radio label to its TRANS call; never merge across calls automatically."""
+    return _digest_id("radio-identifier/v1", str(call_id), identifier)
 
 
 def _read_trans_db(path: Path) -> tuple[sqlite3.Connection, set[str], set[str]]:
@@ -266,11 +276,14 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
                     origin, addressee, pattern = contact
                     candidate_id = _digest_id(*key, origin, addressee, pattern)
                     db.execute("""INSERT OR IGNORE INTO connection_candidates
-                      (candidate_id,source_id,profile_name,profile_version,segment_id,
-                       source_identifier,target_identifier,relationship,extraction_pattern,
-                       review_state,created_at)
-                      VALUES(?,?,?,?,?,?,?,'RADIO_CONTACT',?,'pending',?)""",
-                      (candidate_id, *key, origin, addressee, pattern, now))
+                      (candidate_id,source_id,call_id,profile_name,profile_version,segment_id,
+                       source_entity_id,target_entity_id,source_identifier,target_identifier,
+                       relationship,extraction_pattern,review_state,created_at)
+                      VALUES(?,?,?,?,?,?,?,?,?,?,'RADIO_CONTACT',?,'pending',?)""",
+                      (candidate_id, row["source_id"], row["call_id"], *profile, segment_id,
+                       _radio_entity_id(row["call_id"], origin),
+                       _radio_entity_id(row["call_id"], addressee), origin, addressee,
+                       pattern, now))
             counts["imported"] += 1
         db.commit()
         return counts
@@ -298,10 +311,15 @@ def analyze_pending(db: sqlite3.Connection) -> dict[str, int]:
         key = (row["source_id"], row["profile_name"], row["profile_version"], row["segment_id"])
         candidate_id = _digest_id(*key, origin, addressee, pattern)
         db.execute("""INSERT OR IGNORE INTO connection_candidates
-          (candidate_id,source_id,profile_name,profile_version,segment_id,source_identifier,
-           target_identifier,relationship,extraction_pattern,review_state,created_at)
-          VALUES(?,?,?,?,?,?,?,'RADIO_CONTACT',?,'pending',?)""",
-          (candidate_id, *key, origin, addressee, pattern, _utc_now()))
+          (candidate_id,source_id,call_id,profile_name,profile_version,segment_id,
+           source_entity_id,target_entity_id,source_identifier,target_identifier,
+           relationship,extraction_pattern,review_state,created_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,'RADIO_CONTACT',?,'pending',?)""",
+          (candidate_id, row["source_id"], row["call_id"], row["profile_name"],
+           row["profile_version"], row["segment_id"],
+           _radio_entity_id(row["call_id"], origin),
+           _radio_entity_id(row["call_id"], addressee), origin, addressee,
+           pattern, _utc_now()))
         created += 1
     db.commit()
     return {"created": created}
@@ -328,6 +346,7 @@ def connection_counts(db: sqlite3.Connection) -> dict[str, int]:
 
 def list_candidates(db: sqlite3.Connection, state: str, limit: int) -> list[dict[str, Any]]:
     rows = db.execute("""SELECT c.candidate_id,c.source_identifier,c.target_identifier,
+      c.source_entity_id,c.target_entity_id,
       c.relationship,c.extraction_pattern,c.review_state,c.reviewer,c.analyst_note,
       s.source_id,s.segment_id,s.start_ms,s.occurred_at,s.text,s.source_review_status,
       s.text_sha256,s.confidence,s.confidence_method
