@@ -192,7 +192,7 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
         "speech": 0,
         "audible_events": 0,
         "uncertain": 0,
-        "source_pending": 0,
+        "source_pending_segments": 0,
     }
     content_sql = "g.content_kind" if "content_kind" in segment_cols else "'uncertain'"
     confidence_sql = "g.confidence" if "confidence" in segment_cols else "NULL"
@@ -223,7 +223,7 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
             if source_review not in {"pending", "accepted", "corrected", "rejected"}:
                 raise ValueError("trans_review_state_unknown")
             counts[kind] += 1
-            counts["source_pending"] += source_review == "pending"
+            counts["source_pending_segments"] += source_review == "pending"
             profile = (row["profile_name"], row["profile_version"])
             segment_id = str(row["sequence"])
             key = (row["source_id"], *profile, segment_id)
@@ -278,7 +278,6 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
                    source_review_status) VALUES(?,?,?,?,?,?,?,?)""",
                   (row["source_id"], *profile, segment_id, text, row["start_ms"],
                    row["end_ms"], source_review))
-                counts["audible_events"] += 1
             counts["imported"] += 1
         db.commit()
         return counts
