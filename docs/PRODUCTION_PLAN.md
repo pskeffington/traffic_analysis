@@ -56,3 +56,11 @@
 4. Add the scheduled import only after the data path and failure behavior are verified.
 
 No test suite was run in this task; the repository instruction forbids running tests unless requested. Production readiness remains **BLOCKED** at M1/M2/M5. Static `py_compile`, CLI help, and `git diff --check` on the Traffic Analysis prototype passed; these are not test or integration evidence.
+
+## Handoff evidence
+
+- **Code candidate checked:** draft PR [#1](https://github.com/pskeffington/traffic_analysis/pull/1), source commit `8f6a93b5ac822e51b72a39a177355aa6d129798c`; this evidence note is a subsequent documentation update.
+- **Changed paths:** `README.md`, `src/traffic_analysis/store.py`, `docs/PRODUCTION_PLAN.md`.
+- **Commands/results:** `git diff --check` — exit 0; `PYTHONPATH=src python3 -m py_compile src/traffic_analysis/*.py` — exit 0; `PYTHONPATH=src python3 -m traffic_analysis.cli --help` — exit 0.
+- **Tests/reviews:** tests not run per `AGENTS.md`; independent code, security, and release reviews not performed. No independent approval is claimed.
+- **Stage result:** M0 prototype remains **PASS** for static checks; M1/M2/M5 remain **BLOCKED** as specified above. **Next owner:** TRANS contract and canonical registry owners for RAD-002; Traffic Analysis resumes once that interface and the requested shared data path are cleared.
