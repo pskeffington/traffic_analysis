@@ -142,10 +142,20 @@ SELECT c.candidate_id AS connection_id,
          '; TRANS segment SHA-256=' || s.text_sha256 ||
          CASE WHEN c.analyst_note IS NULL OR c.analyst_note='' THEN ''
               ELSE '; analyst note=' || c.analyst_note END AS notes,
+       n.labels AS "connection_attribute:call_types",
+       n.summary AS "connection_attribute:triage_summary",
+       n.model_id AS "connection_attribute:classification_model",
+       n.uncertainty AS "connection_attribute:model_uncertainty",
+       n.output_sha256 AS "connection_attribute:classification_sha256",
        'RADIO_IDENTIFIER' AS source_type,
        'RADIO_IDENTIFIER' AS target_type
 FROM connection_candidates c
 JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
+LEFT JOIN analysis_records a USING(source_id,profile_name,profile_version,segment_id)
+LEFT JOIN neural_analyses n ON n.record_id=a.record_id
+  AND n.analysis_id=(SELECT n2.analysis_id FROM neural_analyses n2
+    WHERE n2.record_id=a.record_id AND n2.review_state='accepted'
+    ORDER BY n2.reviewed_at DESC,n2.analysis_id DESC LIMIT 1)
 WHERE c.review_state='accepted'
   AND s.source_review_status IN ('accepted','corrected')
   AND s.content_kind='speech';
