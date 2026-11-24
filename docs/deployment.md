@@ -51,8 +51,9 @@ Set `TRAFFIC_ANALYSIS_TRANS_CHECKPOINT`, `TRAFFIC_ANALYSIS_SNAPSHOT`,
 defaults on another installation. Set `TRAFFIC_ANALYSIS_RESEARCH_SOURCE` if
 the private CIFS share has a different source name. Custom data-home and
 snapshot paths must also be added to the unit's `ReadWritePaths`; the default
-paths are already allowed. Configure these with `systemctl --user edit
-traffic-analysis.service`, then run `systemctl --user daemon-reload`. For custom
+paths are already allowed. Configure these with
+`systemctl --user edit traffic-analysis.service`, then run
+`systemctl --user daemon-reload`. For custom
 writable paths, clear and restate `ReadWritePaths` in that drop-in so both the
 local data directory and snapshot directory are allowed. Keep model weights out
 of the Git repository.

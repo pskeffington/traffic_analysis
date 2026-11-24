@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import uuid
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -92,19 +93,31 @@ def restore_snapshot(snapshot: Path, database: Path) -> None:
             raise RuntimeError("local_analysis_database_is_not_a_valid_file")
         require_integrity(database)
         return
-    if not snapshot.is_file():
-        raise RuntimeError("analysis_snapshot_missing_and_no_local_database")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        directory_fd = os.open(snapshot.parent, directory_flags)
+    except OSError as exc:
+        raise RuntimeError("analysis_snapshot_missing_and_no_local_database") from exc
     temporary = database.with_name(database.name + ".restore-partial")
     if temporary.exists():
+        os.close(directory_fd)
         raise RuntimeError("stale_analysis_restore_file_requires_operator_review")
     try:
-        shutil.copyfile(snapshot, temporary)
+        _require_research_mount(snapshot.parent)
+        source_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        source_fd = os.open(snapshot.name, source_flags, dir_fd=directory_fd)
+        with os.fdopen(source_fd, "rb") as source, temporary.open("xb") as output:
+            _require_research_mount(snapshot.parent)
+            shutil.copyfileobj(source, output, length=1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
         os.chmod(temporary, 0o600)
         require_integrity(temporary)
         os.replace(temporary, database)
     finally:
         if temporary.exists():
             temporary.unlink()
+        os.close(directory_fd)
 
 
 def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
@@ -113,17 +126,21 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
     target = directory / "transcription.sqlite"
     written = 0
     try:
-        with gzip.open(checkpoint, "rb") as source, target.open("xb") as output:
-            while True:
-                block = source.read(1024 * 1024)
-                if not block:
-                    break
-                written += len(block)
-                if written > MAX_TRANSCRIPT_DB_BYTES:
-                    raise RuntimeError("trans_checkpoint_exceeds_size_limit")
-                output.write(block)
-            output.flush()
-            os.fsync(output.fileno())
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        source_fd = os.open(checkpoint, flags)
+        with os.fdopen(source_fd, "rb") as compressed:
+            _require_research_mount(checkpoint)
+            with gzip.GzipFile(fileobj=compressed, mode="rb") as source, target.open("xb") as output:
+                while True:
+                    block = source.read(1024 * 1024)
+                    if not block:
+                        break
+                    written += len(block)
+                    if written > MAX_TRANSCRIPT_DB_BYTES:
+                        raise RuntimeError("trans_checkpoint_exceeds_size_limit")
+                    output.write(block)
+                output.flush()
+                os.fsync(output.fileno())
         os.chmod(target, 0o600)
         require_integrity(target)
     except Exception:
@@ -134,17 +151,18 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
 
 def publish_snapshot(database: Path, snapshot: Path) -> str:
     require_integrity(database)
-    _require_research_mount(snapshot.parent)
     snapshot.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if snapshot.parent.stat().st_mode & 0o077:
-        raise RuntimeError("analysis_snapshot_directory_is_not_private")
-    fd, temporary_name = tempfile.mkstemp(
-        prefix=f".{snapshot.name}.", suffix=".partial", dir=snapshot.parent
-    )
-    temporary = Path(temporary_name)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    directory_fd = os.open(snapshot.parent, directory_flags)
+    temporary_name = f".{snapshot.name}.{uuid.uuid4().hex}.partial"
     digest = hashlib.sha256()
     try:
-        with database.open("rb") as source, os.fdopen(fd, "wb") as output:
+        _require_research_mount(snapshot.parent)
+        if os.fstat(directory_fd).st_mode & 0o077:
+            raise RuntimeError("analysis_snapshot_directory_is_not_private")
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+        file_fd = os.open(temporary_name, file_flags, 0o600, dir_fd=directory_fd)
+        with database.open("rb") as source, os.fdopen(file_fd, "wb") as output:
             while True:
                 block = source.read(1024 * 1024)
                 if not block:
@@ -153,18 +171,26 @@ def publish_snapshot(database: Path, snapshot: Path) -> str:
                 output.write(block)
             output.flush()
             os.fsync(output.fileno())
-        os.chmod(temporary, 0o600)
-        if temporary.stat().st_size != database.stat().st_size:
+        copied_stat = os.stat(temporary_name, dir_fd=directory_fd, follow_symlinks=False)
+        if copied_stat.st_size != database.stat().st_size:
             raise RuntimeError("analysis_snapshot_copy_size_mismatch")
-        os.replace(temporary, snapshot)
-        with snapshot.open("rb") as published_file:
+        _require_research_mount(snapshot.parent)
+        os.replace(temporary_name, snapshot.name,
+                   src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.fsync(directory_fd)
+        published_fd = os.open(snapshot.name, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+                               dir_fd=directory_fd)
+        with os.fdopen(published_fd, "rb") as published_file:
             published_digest = hashlib.file_digest(published_file, "sha256").hexdigest()
         if published_digest != digest.hexdigest():
             raise RuntimeError("analysis_snapshot_copy_digest_mismatch")
-        require_integrity(snapshot)
         return published_digest
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        os.close(directory_fd)
 
 
 def run_cli(database: Path, *args: str) -> None:

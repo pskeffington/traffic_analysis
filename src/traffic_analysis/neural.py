@@ -108,19 +108,25 @@ def _request_json(socket_path: Path, route: str,
 
 
 def _available_memory_bytes() -> int:
+    # sysconf is intentionally the conservative base. MemAvailable includes
+    # reclaimable cache across the host, which may not be usable inside a
+    # NUMA memory-node restriction.
     try:
-        available = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        conservative = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
     except (ValueError, OSError):
-        available = 0
+        conservative = 0
+    available = conservative
+    memavailable: int | None = None
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
             if line.startswith("MemAvailable:"):
                 fields = line.split()
                 if len(fields) >= 3 and fields[2] == "kB":
-                    available = max(available, int(fields[1]) * 1024)
+                    memavailable = int(fields[1]) * 1024
                 break
     except (OSError, ValueError):
         pass
+    numa_restricted = False
     try:
         def parse_node_ids(value: str) -> set[int]:
             nodes: set[int] = set()
@@ -142,7 +148,10 @@ def _available_memory_bytes() -> int:
             if line.startswith("Mems_allowed_list:")
         )
         allowed = parse_node_ids(allowed_line.split(":", 1)[1])
-        if online and allowed and not online.issubset(allowed):
+        if online and not allowed:
+            raise ValueError("numa_allowed_memory_nodes_unavailable")
+        numa_restricted = bool(online and allowed and not online.issubset(allowed))
+        if numa_restricted:
             free_bytes = 0
             for node in online & allowed:
                 for line in Path(
@@ -152,9 +161,14 @@ def _available_memory_bytes() -> int:
                     if len(fields) >= 5 and fields[2] == "MemFree:":
                         free_bytes += int(fields[3]) * 1024
                         break
-            available = free_bytes if available == 0 else min(available, free_bytes)
+            available = free_bytes if conservative == 0 else min(conservative, free_bytes)
     except (OSError, ValueError, StopIteration):
-        pass
+        # If this process may be confined to a subset of NUMA nodes and we
+        # cannot read the node data, do not use host-wide MemAvailable.
+        available = conservative
+        numa_restricted = True
+    if not numa_restricted and memavailable is not None:
+        available = max(available, memavailable)
     cgroup_limits: list[int] = []
     try:
         cgroup_path = next(
