@@ -16,9 +16,11 @@ This document describes release gates without recording source transcript conten
 | M0 — Local analysis package | Standard-library runtime; read-only TRANS import; provenance and timestamps retained; explicit pattern extraction; event and candidate review commands; Arch Notebook SQL view | Implemented prototype |
 | M1 — TRANS review contract | Versioned speech/event/uncertain kinds; human review bound to exact text hash and kind; corrections invalidate stale decisions; resumable migration and rollback | Blocked on TRANS-owned segment-review contract; current input exposes transcript-level review only |
 | M2 — Corpus operation | Repeatable private local import; source integrity preserved; aggregate status reporting; no corpus content in repository | Deployment-specific verification; keep its receipt and findings outside the public repository |
-| M3 — Arch Notebook regression | Approved rows only; capture a baseline and a later immutable snapshot; inspect additions/removals with evidence references | Partial; SQL projection documented, live handoff not verified |
-| M4 — Automation | Operator-selected cadence, idempotent runs, bounded local history, failure and last-success reporting | Not started |
-| M5 — Public release and family integration | Privacy and dependency audit; approved family registration; independent malformed/stale/unauthorized review; reproducible package build; release owner approval | Not ready |
+| M3 — Text call-type triage | Every speech segment gets overlapping deterministic labels; events/uncertain remain separate; aggregate counts available; labels do not imply graph edges | Keyword prototype implemented; unvalidated; see [literature matrix](literature_matrix.md) |
+| M4 — Local neural triage | Optional local model proposes evidence-backed categories, station mentions, summary, and explicit radio contacts; outputs are versioned, pending, resumable, and review-gated | Code path implemented; host model readiness and inference quality not verified; see [neural engine contract](neural_engine.md) |
+| M5 — Arch Notebook regression | Approved classifications and connections only; capture baseline and later immutable snapshot; inspect additions/removals with evidence references | SQL views implemented/documented; live handoff not verified |
+| M6 — Automation | Operator-selected cadence, idempotent runs, bounded local history, failure and last-success reporting | Not started |
+| M7 — Public release and family integration | Privacy and dependency audit; approved family registration; independent malformed/stale/unauthorized review; reproducible package build; release owner approval | Not ready |
 
 ## Required invariants
 
@@ -28,12 +30,14 @@ This document describes release gates without recording source transcript conten
 4. Only explicit addressing patterns produce directed candidates. Every candidate starts pending review.
 5. Arch Notebook output requires both an accepted candidate and source review state `accepted` or `corrected`.
 6. Radio identifiers remain scoped to their TRANS call. No alias merging or person/organization identity resolution is performed.
-7. The package has no runtime network calls, telemetry, or external dependencies.
+7. The package has no network listeners, external network calls, telemetry, or model downloads. Optional neural inference uses a private temporary Unix socket to a local llama.cpp process.
 
 ## Release gates
 
 - Confirm the TRANS schema version and exact source review semantics before depending on source approval.
 - Review synthetic examples and approved representative radio examples for false positive and false negative behavior. Keep examples synthetic in Git.
+- Before relying on call-type labels, define an annotation guide and evaluate per-label precision/recall/F1 on a source-grouped, adjudicated sample. Current keyword labels are unvalidated triage aids; consult the [literature matrix](literature_matrix.md).
+- Before enabling neural classification in scheduled production, verify model shard completeness, memory/runtime fit, structured-output support, and per-label quality on authorized reviewed examples. The engine must remain opt-in until those gates pass.
 - Verify malformed schemas, changed hashes, unknown kinds, stale review, rejected text, and concurrent import behavior.
 - Review storage permissions, database backup/retention, and Git-ignore rules before any corpus operation.
 - Confirm the Arch Notebook SQL contract and operator approval before export or scheduled capture.
