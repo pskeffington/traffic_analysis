@@ -2,25 +2,34 @@
 
 Traffic Analysis uses a user-level hourly oneshot service. It reads the TRANS
 recovery checkpoint, imports it read-only, runs a resumable local Qwen batch,
-then publishes one closed SQLite snapshot to the Research share. The active
-SQLite file stays in private local storage because direct SQLite writes to the
-mounted CIFS share fail during lock acquisition. Arch Notebook can open the
-closed snapshot read-only.
+then publishes the updated database to the Research share. SQLite changes are
+made in a private, temporary local working directory because direct SQLite
+writes to the mounted CIFS share fail during lock acquisition. The working copy
+is removed after each run; the Research share holds the one persistent Traffic
+Analysis database, which Arch Notebook can open read-only.
 
 ## Paths
 
 - TRANS input: `~/Research.Databases/audio_ingest/transcription.sqlite.gz`
-- Local active database: `~/.local/share/traffic-analysis/traffic-analysis.sqlite`
-- Published snapshot: `~/Research.Databases/traffic_analysis/traffic-analysis.sqlite`
+- Persistent database: `~/Research.Databases/traffic_analysis/traffic-analysis.sqlite`
+- Persistent service lock: `~/.local/share/traffic-analysis/production-cycle.lock`
+- Private per-run working database and TRANS import: a temporary directory removed at cycle exit
 - Default model: installed Qwen3.5-9B Q4 GGUF in the llama.cpp model cache
 - Inference runtime: installed `llama-server`, started for each batch on a
   private Unix socket and stopped when the batch ends
 
 The service holds a local single-writer lock, verifies SQLite integrity,
 bounds checkpoint decompression, imports transcript text only, and atomically
-replaces the closed Research snapshot after a completed cycle. It logs
-aggregate counts and a snapshot digest, not transcript text. The snapshot and
-local working directory use owner-only permissions. Model and source files are
+replaces the closed Research database after a completed cycle. Each run starts
+from that database, applies new imports and classifications locally, then
+removes its temporary copy. If an older persistent local database exists, the
+service removes it only after verifying it is byte-identical to the Research
+database and successfully publishing the next Research version. It stops with
+an error and preserves the local database if the Research copy is missing or
+the two databases differ; resolve that migration manually before restarting.
+The service logs aggregate
+counts and a database digest, not transcript text. The database, working
+directory, and lock use owner-only permissions. Model and source files are
 read-only inputs.
 
 ## Install and operate

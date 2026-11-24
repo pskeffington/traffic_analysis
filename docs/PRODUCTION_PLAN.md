@@ -15,7 +15,7 @@ This document describes release gates without recording source transcript conten
 |---|---|---|
 | M0 — Local analysis package | Standard-library runtime; read-only TRANS import; provenance and timestamps retained; explicit pattern extraction; event and candidate review commands; Arch Notebook SQL view | Implemented prototype |
 | M1 — TRANS review contract | Versioned speech/event/uncertain kinds; human review bound to exact text hash and kind; corrections invalidate stale decisions; resumable migration and rollback | Blocked on TRANS-owned segment-review contract; current input exposes transcript-level review only |
-| M2 — Corpus operation | Repeatable private local import; source integrity preserved; aggregate status reporting; no corpus content in repository | 3,409 TRANS segments imported and a closed SQLite snapshot published to the private Research share; Qwen batch activation pending |
+| M2 — Corpus operation | Repeatable private import; source integrity preserved; one persistent analysis database on the Research volume; aggregate status reporting; no corpus content in repository | TRANS corpus imported; the Research database is the persistent copy; scheduled Qwen batch activation pending |
 | M3 — Text call-type triage | Every speech segment gets overlapping deterministic labels; events/uncertain remain separate; aggregate counts available; labels do not imply graph edges | Keyword prototype implemented; unvalidated; see [literature matrix](literature_matrix.md) |
 | M4 — Local neural triage | Optional local model proposes evidence-backed categories, station mentions, summary, and explicit radio contacts; outputs are versioned, pending, resumable, and review-gated | Qwen3.5-9B Q4 weights found and checksum verified; inference smoke run awaits activation outside the command sandbox; see [neural engine contract](neural_engine.md) |
 | M5 — Arch Notebook regression | Approved classifications and connections only; capture baseline and later immutable snapshot; inspect additions/removals with evidence references | SQL views implemented/documented; live handoff not verified |
@@ -25,7 +25,7 @@ This document describes release gates without recording source transcript conten
 ## Required invariants
 
 1. TRANS input is opened read-only. The importer never reads audio paths or source media.
-2. Imported text and provenance remain in private local storage. Git contains code and synthetic examples only.
+2. The persistent analysis database and derived records remain on the operator-controlled Research volume. Per-run working copies are private and removed on completion. Git contains code and synthetic examples only.
 3. Missing or unknown `content_kind` fails closed to `uncertain`. Audible events remain visible but never become speech-derived contacts.
 4. Only explicit addressing patterns produce directed candidates. Every candidate starts pending review.
 5. Arch Notebook output requires both an accepted candidate and source review state `accepted` or `corrected`.

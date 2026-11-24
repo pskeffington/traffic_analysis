@@ -93,14 +93,14 @@ This inference path uses a private temporary Unix socket and standard-library HT
 
 ## Data handling
 
-- Keep source databases, imported transcript text, analysis databases, and review notes in private operator-controlled storage. The production service keeps its active database locally and atomically publishes one closed SQLite snapshot to the private Research share.
+- Keep source databases, imported transcript text, the analysis database, and review notes in private operator-controlled storage. The production service persists one analysis database on the Research share and uses a private local working copy that is removed after each cycle.
 - Never commit corpus records, exported transcripts, analysis databases, screenshots, logs containing text, or identifying source metadata.
 - The repository demo contains synthetic text only. There is no external network access or telemetry; optional neural inference uses a temporary private Unix socket.
 - Use only data you are authorized to process and follow the TRANS source's access and retention rules.
 
 See [the production plan](docs/PRODUCTION_PLAN.md) for current implementation status and remaining integration gates.
 See the [text-classification literature matrix](docs/literature_matrix.md) for evidence, limits, and recommended validation practice for radio call-type labels.
-See [local deployment](docs/deployment.md) for the hourly import, Qwen batch, and Research snapshot service.
+See [local deployment](docs/deployment.md) for the hourly import, Qwen batch, and Research database service.
 
 ## License
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import errno
 import gzip
 import hashlib
 import os
@@ -96,37 +97,91 @@ def verify_research_mount(checkpoint: Path, snapshot: Path) -> None:
         _require_research_mount(path)
 
 
-def restore_snapshot(snapshot: Path, database: Path) -> None:
-    if database.exists():
-        if not database.is_file() or database.stat().st_size == 0:
-            raise RuntimeError("local_analysis_database_is_not_a_valid_file")
-        require_integrity(database)
-        return
+def research_file_sha256(path: Path) -> str:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        directory_fd = os.open(path.parent, directory_flags)
+    except OSError as exc:
+        raise RuntimeError("research_database_directory_unavailable") from exc
+    try:
+        _require_research_mount(path.parent, directory_fd)
+        source_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        source_fd = os.open(path.name, source_flags, dir_fd=directory_fd)
+        with os.fdopen(source_fd, "rb") as source:
+            _require_research_mount(path, source.fileno())
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+            _require_research_mount(path, source.fileno())
+            return digest
+    finally:
+        os.close(directory_fd)
+
+
+def restore_snapshot(snapshot: Path, database: Path) -> bool:
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
         directory_fd = os.open(snapshot.parent, directory_flags)
     except OSError as exc:
-        raise RuntimeError("analysis_snapshot_missing_and_no_local_database") from exc
-    temporary = database.with_name(database.name + ".restore-partial")
-    if temporary.exists():
-        os.close(directory_fd)
-        raise RuntimeError("stale_analysis_restore_file_requires_operator_review")
+        raise RuntimeError("research_database_directory_unavailable") from exc
     try:
         _require_research_mount(snapshot.parent, directory_fd)
         source_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        source_fd = os.open(snapshot.name, source_flags, dir_fd=directory_fd)
-        with os.fdopen(source_fd, "rb") as source, temporary.open("xb") as output:
-            _require_research_mount(snapshot, source.fileno())
-            shutil.copyfileobj(source, output, length=1024 * 1024)
-            output.flush()
-            os.fsync(output.fileno())
-            _require_research_mount(snapshot, source.fileno())
-        os.chmod(temporary, 0o600)
-        require_integrity(temporary)
-        os.replace(temporary, database)
-    finally:
+        try:
+            source_fd = os.open(snapshot.name, source_flags, dir_fd=directory_fd)
+        except FileNotFoundError:
+            _require_research_mount(snapshot.parent, directory_fd)
+            return False
+        temporary = database.with_name(database.name + ".restore-partial")
         if temporary.exists():
-            temporary.unlink()
+            os.close(source_fd)
+            raise RuntimeError("stale_analysis_restore_file_requires_operator_review")
+        try:
+            with os.fdopen(source_fd, "rb") as source, temporary.open("xb") as output:
+                _require_research_mount(snapshot, source.fileno())
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+                output.flush()
+                os.fsync(output.fileno())
+                _require_research_mount(snapshot, source.fileno())
+            os.chmod(temporary, 0o600)
+            require_integrity(temporary)
+            os.replace(temporary, database)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        return True
+    finally:
+        os.close(directory_fd)
+
+
+def verify_legacy_duplicate(legacy: Path, snapshot: Path) -> str | None:
+    if not legacy.exists():
+        return None
+    legacy_info = legacy.lstat()
+    if not legacy.is_file() or legacy_info.st_mode & 0o077:
+        raise RuntimeError("legacy_local_database_is_not_a_private_regular_file")
+    if any(Path(str(legacy) + suffix).exists()
+           for suffix in ("-journal", "-shm", "-wal")):
+        raise RuntimeError("legacy_local_database_has_sqlite_sidecars")
+    require_integrity(legacy)
+    with legacy.open("rb") as source:
+        legacy_digest = hashlib.file_digest(source, "sha256").hexdigest()
+    if legacy_digest != research_file_sha256(snapshot):
+        raise RuntimeError("legacy_local_database_differs_from_research_snapshot")
+    return legacy_digest
+
+
+def remove_verified_legacy_duplicate(legacy: Path, expected_digest: str) -> None:
+    if any(Path(str(legacy) + suffix).exists()
+           for suffix in ("-journal", "-shm", "-wal")):
+        raise RuntimeError("legacy_local_database_has_sqlite_sidecars")
+    with legacy.open("rb") as source:
+        current_digest = hashlib.file_digest(source, "sha256").hexdigest()
+    if current_digest != expected_digest:
+        raise RuntimeError("legacy_local_database_changed_before_removal")
+    legacy.unlink()
+    directory_fd = os.open(legacy.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
         os.close(directory_fd)
 
 
@@ -160,13 +215,25 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
     return target
 
 
+def _fsync_directory(directory_fd: int) -> None:
+    try:
+        os.fsync(directory_fd)
+    except OSError as exc:
+        if exc.errno not in {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            raise
+
+
 def publish_snapshot(database: Path, snapshot: Path) -> str:
     require_integrity(database)
     snapshot.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
     directory_fd = os.open(snapshot.parent, directory_flags)
     temporary_name = f".{snapshot.name}.{uuid.uuid4().hex}.partial"
+    backup_name = f".{snapshot.name}.{uuid.uuid4().hex}.previous"
     digest = hashlib.sha256()
+    backup_created = False
+    backup_file_created = False
+    replaced = False
     try:
         _require_research_mount(snapshot.parent, directory_fd)
         if os.fstat(directory_fd).st_mode & 0o077:
@@ -185,10 +252,60 @@ def publish_snapshot(database: Path, snapshot: Path) -> str:
         copied_stat = os.stat(temporary_name, dir_fd=directory_fd, follow_symlinks=False)
         if copied_stat.st_size != database.stat().st_size:
             raise RuntimeError("analysis_snapshot_copy_size_mismatch")
+
+        staged_fd = os.open(temporary_name, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+                            dir_fd=directory_fd)
+        with os.fdopen(staged_fd, "rb") as staged:
+            _require_research_mount(snapshot.parent / temporary_name, staged.fileno())
+            staged_digest = hashlib.file_digest(staged, "sha256").hexdigest()
+            _require_research_mount(snapshot.parent / temporary_name, staged.fileno())
+        if staged_digest != digest.hexdigest():
+            raise RuntimeError("analysis_snapshot_staged_digest_mismatch")
+
+        try:
+            previous_fd = os.open(
+                snapshot.name,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            previous_fd = None
+        if previous_fd is not None:
+            try:
+                backup_fd = os.open(backup_name, file_flags, 0o600, dir_fd=directory_fd)
+            except Exception:
+                os.close(previous_fd)
+                raise
+            backup_file_created = True
+            previous_digest = hashlib.sha256()
+            with os.fdopen(previous_fd, "rb") as previous, os.fdopen(backup_fd, "wb") as backup:
+                _require_research_mount(snapshot, previous.fileno())
+                _require_research_mount(snapshot.parent / backup_name, backup.fileno())
+                while True:
+                    block = previous.read(1024 * 1024)
+                    if not block:
+                        break
+                    previous_digest.update(block)
+                    backup.write(block)
+                backup.flush()
+                os.fsync(backup.fileno())
+                _require_research_mount(snapshot, previous.fileno())
+            backup_check_fd = os.open(backup_name, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+                                      dir_fd=directory_fd)
+            with os.fdopen(backup_check_fd, "rb") as backup_check:
+                _require_research_mount(snapshot.parent / backup_name, backup_check.fileno())
+                backup_digest = hashlib.file_digest(backup_check, "sha256").hexdigest()
+                _require_research_mount(snapshot.parent / backup_name, backup_check.fileno())
+            if backup_digest != previous_digest.hexdigest():
+                os.unlink(backup_name, dir_fd=directory_fd)
+                raise RuntimeError("analysis_snapshot_rollback_copy_mismatch")
+            backup_created = True
+
         _require_research_mount(snapshot.parent, directory_fd)
         os.replace(temporary_name, snapshot.name,
                    src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
-        os.fsync(directory_fd)
+        replaced = True
+        _fsync_directory(directory_fd)
         published_fd = os.open(snapshot.name, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
                                dir_fd=directory_fd)
         with os.fdopen(published_fd, "rb") as published_file:
@@ -197,12 +314,43 @@ def publish_snapshot(database: Path, snapshot: Path) -> str:
             _require_research_mount(snapshot, published_file.fileno())
         if published_digest != digest.hexdigest():
             raise RuntimeError("analysis_snapshot_copy_digest_mismatch")
+        if backup_created:
+            os.unlink(backup_name, dir_fd=directory_fd)
+            backup_created = False
+            try:
+                _fsync_directory(directory_fd)
+            except OSError as exc:
+                print(f"warning: published database is verified but backup cleanup sync failed ({exc.errno})",
+                      file=sys.stderr)
         return published_digest
+    except Exception:
+        if replaced:
+            try:
+                if backup_created:
+                    os.replace(backup_name, snapshot.name,
+                               src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+                    backup_created = False
+                else:
+                    os.unlink(snapshot.name, dir_fd=directory_fd)
+                _fsync_directory(directory_fd)
+            except OSError as rollback_exc:
+                raise RuntimeError("analysis_snapshot_publish_and_rollback_failed") from rollback_exc
+        raise
     finally:
         try:
             os.unlink(temporary_name, dir_fd=directory_fd)
         except FileNotFoundError:
             pass
+        if backup_created and not replaced:
+            try:
+                os.unlink(backup_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        elif backup_file_created and not backup_created:
+            try:
+                os.unlink(backup_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
         os.close(directory_fd)
 
 
@@ -218,7 +366,6 @@ def main_cycle() -> int:
     data_home.mkdir(parents=True, exist_ok=True, mode=0o700)
     if data_home.stat().st_mode & 0o077:
         raise RuntimeError("local_analysis_directory_is_not_private")
-    database = data_home / "traffic-analysis.sqlite"
     lock_path = data_home / "production-cycle.lock"
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     with os.fdopen(lock_fd, "r+") as lock:
@@ -246,14 +393,20 @@ def main_cycle() -> int:
             server = Path(found)
 
         verify_research_mount(checkpoint, snapshot)
-        restore_snapshot(snapshot, database)
+        legacy_database = data_home / "traffic-analysis.sqlite"
+        legacy_duplicate_digest = verify_legacy_duplicate(legacy_database, snapshot)
         with tempfile.TemporaryDirectory(prefix="traffic-analysis-cycle-") as temp:
-            trans_database = inflate_trans_checkpoint(checkpoint, Path(temp))
+            working_directory = Path(temp)
+            database = working_directory / "traffic-analysis.sqlite"
+            restore_snapshot(snapshot, database)
+            trans_database = inflate_trans_checkpoint(checkpoint, working_directory)
             run_cli(database, "import-trans", "--trans-database", str(trans_database))
-        run_cli(database, "neural-classify", "--model", str(model),
-                "--llama-server", str(server), "--limit", "1000")
-        run_cli(database, "report")
-        digest = publish_snapshot(database, snapshot)
+            run_cli(database, "neural-classify", "--model", str(model),
+                    "--llama-server", str(server), "--limit", "1000")
+            run_cli(database, "report")
+            digest = publish_snapshot(database, snapshot)
+        if legacy_duplicate_digest:
+            remove_verified_legacy_duplicate(legacy_database, legacy_duplicate_digest)
         print(f"Research analysis snapshot updated; sha256={digest}")
     return 0
 
