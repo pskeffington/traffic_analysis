@@ -41,9 +41,8 @@ journalctl --user -u traffic-analysis.service
 The first run imports the current TRANS checkpoint and classifies up to 1,000
 speech segments. Later hourly runs import new or changed records and skip model
 analyses already completed for the same model, prompt, and engine versions. The
-service uses an explicit memory override because this host's `sysconf` estimate
-is lower than observed available RAM; recheck host memory before moving the unit
-to another system.
+The model preflight uses Linux `MemAvailable` and honors a tighter active cgroup
+limit when present. Recheck host memory before moving the unit to another system.
 
 Set `TRAFFIC_ANALYSIS_TRANS_CHECKPOINT`, `TRAFFIC_ANALYSIS_SNAPSHOT`,
 `TRAFFIC_ANALYSIS_DATA_HOME`, `TRAFFIC_ANALYSIS_MODEL`, or

@@ -112,6 +112,15 @@ def _available_memory_bytes() -> int:
         available = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
     except (ValueError, OSError):
         available = 0
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                fields = line.split()
+                if len(fields) >= 3 and fields[2] == "kB":
+                    available = max(available, int(fields[1]) * 1024)
+                break
+    except (OSError, ValueError):
+        pass
     for limit_path, usage_path in (
         (Path("/sys/fs/cgroup/memory.max"), Path("/sys/fs/cgroup/memory.current")),
         (Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
@@ -123,8 +132,10 @@ def _available_memory_bytes() -> int:
             usage = int(usage_path.read_text().strip())
         except (OSError, ValueError):
             continue
-        if limit > 0 and (available == 0 or limit < available):
-            available = max(0, limit - usage)
+        if limit > 0:
+            cgroup_available = max(0, limit - usage)
+            available = (cgroup_available if available == 0
+                         else min(available, cgroup_available))
     return available
 
 

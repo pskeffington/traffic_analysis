@@ -161,8 +161,7 @@ def main_cycle() -> int:
             trans_database = inflate_trans_checkpoint(checkpoint, Path(temp))
             run_cli(database, "import-trans", "--trans-database", str(trans_database))
         run_cli(database, "neural-classify", "--model", str(model),
-                "--llama-server", str(server), "--limit", "1000",
-                "--allow-memory-overcommit")
+                "--llama-server", str(server), "--limit", "1000")
         run_cli(database, "report")
         digest = publish_snapshot(database, snapshot)
         print(f"Research analysis snapshot updated; sha256={digest}")
