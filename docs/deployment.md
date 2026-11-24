@@ -42,6 +42,12 @@ systemd, enables the hourly timer, and starts the initial batch. It does not use
 sudo. The service keeps the checkpoint read-only and writes only to the analysis
 directory on the Research share.
 
+The installer also creates `~/Desktop/Run Traffic Analysis Now.desktop`. Use
+it for a manual cycle when the user systemd bus is unavailable. It invokes the
+same guarded runner directly; the persistent single-writer lock prevents it
+from overlapping an active timer cycle. The terminal remains open to show
+aggregate status and any safe error codes.
+
 Inspect operation with:
 
 ```sh

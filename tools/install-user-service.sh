@@ -9,6 +9,7 @@ readonly model="${HOME}/.local/share/llama.cpp/cache/models--lmstudio-community-
 readonly expected_model_sha256="cd76ec205963b3b33350093e6904d9de16c4e666fd104e1f632d25c7f15f2a13"
 readonly unit_dir="${HOME}/.config/systemd/user"
 readonly data_home="${HOME}/.local/share/traffic-analysis"
+readonly desktop_template="${repo}/desktop/traffic-analysis-now.desktop.in"
 
 die() {
   printf 'Traffic Analysis deployment: %s\n' "$1" >&2
@@ -46,6 +47,11 @@ actual_model_sha256="$(sha256sum "${model}" | cut -d ' ' -f 1)"
 mkdir -p -m 0700 "${unit_dir}"
 ln -sfn "${repo}/systemd/traffic-analysis.service" "${unit_dir}/traffic-analysis.service"
 ln -sfn "${repo}/systemd/traffic-analysis.timer" "${unit_dir}/traffic-analysis.timer"
+if [[ -d "${HOME}/Desktop" ]]; then
+  sed "s|@REPOSITORY@|${repo}|g" "${desktop_template}" \
+    > "${HOME}/Desktop/Run Traffic Analysis Now.desktop"
+  chmod 0755 "${HOME}/Desktop/Run Traffic Analysis Now.desktop"
+fi
 systemctl --user daemon-reload
 systemctl --user enable --now traffic-analysis.timer
 systemctl --user start --no-block traffic-analysis.service
