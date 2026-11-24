@@ -121,21 +121,54 @@ def _available_memory_bytes() -> int:
                 break
     except (OSError, ValueError):
         pass
-    for limit_path, usage_path in (
-        (Path("/sys/fs/cgroup/memory.max"), Path("/sys/fs/cgroup/memory.current")),
-        (Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
-         Path("/sys/fs/cgroup/memory/memory.usage_in_bytes")),
-    ):
-        try:
-            raw_limit = limit_path.read_text().strip()
-            limit = int(raw_limit) if raw_limit != "max" else 0
-            usage = int(usage_path.read_text().strip())
-        except (OSError, ValueError):
-            continue
-        if limit > 0:
-            cgroup_available = max(0, limit - usage)
-            available = (cgroup_available if available == 0
-                         else min(available, cgroup_available))
+    cgroup_limits: list[int] = []
+    try:
+        cgroup_path = next(
+            line.split("::", 1)[1].strip().lstrip("/")
+            for line in Path("/proc/self/cgroup").read_text().splitlines()
+            if line.startswith("0::")
+        )
+        cgroup_root = Path("/sys/fs/cgroup")
+        current = cgroup_root / cgroup_path
+        while current == cgroup_root or cgroup_root in current.parents:
+            try:
+                raw_limit = (current / "memory.max").read_text().strip()
+                if raw_limit != "max":
+                    limit = int(raw_limit)
+                    usage = int((current / "memory.current").read_text().strip())
+                    cgroup_limits.append(max(0, limit - usage))
+            except (OSError, ValueError):
+                pass
+            if current == cgroup_root:
+                break
+            current = current.parent
+    except (OSError, StopIteration):
+        pass
+    try:
+        cgroup_path = next(
+            line.split(":", 2)[2].strip().lstrip("/")
+            for line in Path("/proc/self/cgroup").read_text().splitlines()
+            if "memory" in line.split(":", 2)[1].split(",")
+        )
+        cgroup_root = Path("/sys/fs/cgroup/memory")
+        current = cgroup_root / cgroup_path
+        while current == cgroup_root or cgroup_root in current.parents:
+            try:
+                limit = int((current / "memory.limit_in_bytes").read_text().strip())
+                usage = int((current / "memory.usage_in_bytes").read_text().strip())
+                if 0 < limit < (1 << 60):
+                    cgroup_limits.append(max(0, limit - usage))
+            except (OSError, ValueError):
+                pass
+            if current == cgroup_root:
+                break
+            current = current.parent
+    except (OSError, StopIteration):
+        pass
+    if cgroup_limits:
+        cgroup_available = min(cgroup_limits)
+        available = (cgroup_available if available == 0
+                     else min(available, cgroup_available))
     return available
 
 
