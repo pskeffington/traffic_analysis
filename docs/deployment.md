@@ -41,13 +41,21 @@ journalctl --user -u traffic-analysis.service
 The first run imports the current TRANS checkpoint and classifies up to 1,000
 speech segments. Later hourly runs import new or changed records and skip model
 analyses already completed for the same model, prompt, and engine versions. The
-The model preflight uses Linux `MemAvailable` and honors a tighter active cgroup
-limit when present. Recheck host memory before moving the unit to another system.
+model preflight uses Linux `MemAvailable`, honors a tighter active cgroup limit,
+and conservatively respects NUMA memory-node restrictions. Recheck host memory
+before moving the unit to another system.
 
 Set `TRAFFIC_ANALYSIS_TRANS_CHECKPOINT`, `TRAFFIC_ANALYSIS_SNAPSHOT`,
 `TRAFFIC_ANALYSIS_DATA_HOME`, `TRAFFIC_ANALYSIS_MODEL`, or
 `TRAFFIC_ANALYSIS_LLAMA_SERVER` in the user service environment to override
-defaults on another installation. Keep model weights out of the Git repository.
+defaults on another installation. Set `TRAFFIC_ANALYSIS_RESEARCH_SOURCE` if
+the private CIFS share has a different source name. Custom data-home and
+snapshot paths must also be added to the unit's `ReadWritePaths`; the default
+paths are already allowed. Configure these with `systemctl --user edit
+traffic-analysis.service`, then run `systemctl --user daemon-reload`. For custom
+writable paths, clear and restate `ReadWritePaths` in that drop-in so both the
+local data directory and snapshot directory are allowed. Keep model weights out
+of the Git repository.
 
 Every neural result remains pending review. TRANS review is also pending in the
 current corpus, so Arch Notebook views do not publish these classifications or

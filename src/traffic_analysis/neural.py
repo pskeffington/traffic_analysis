@@ -121,6 +121,40 @@ def _available_memory_bytes() -> int:
                 break
     except (OSError, ValueError):
         pass
+    try:
+        def parse_node_ids(value: str) -> set[int]:
+            nodes: set[int] = set()
+            for item in value.strip().split(","):
+                if not item:
+                    continue
+                if "-" in item:
+                    start, end = item.split("-", 1)
+                    nodes.update(range(int(start), int(end) + 1))
+                else:
+                    nodes.add(int(item))
+            return nodes
+
+        online = parse_node_ids(
+            Path("/sys/devices/system/node/online").read_text()
+        )
+        allowed_line = next(
+            line for line in Path("/proc/self/status").read_text().splitlines()
+            if line.startswith("Mems_allowed_list:")
+        )
+        allowed = parse_node_ids(allowed_line.split(":", 1)[1])
+        if online and allowed and not online.issubset(allowed):
+            free_bytes = 0
+            for node in online & allowed:
+                for line in Path(
+                    f"/sys/devices/system/node/node{node}/meminfo"
+                ).read_text().splitlines():
+                    fields = line.split()
+                    if len(fields) >= 5 and fields[2] == "MemFree:":
+                        free_bytes += int(fields[3]) * 1024
+                        break
+            available = free_bytes if available == 0 else min(available, free_bytes)
+    except (OSError, ValueError, StopIteration):
+        pass
     cgroup_limits: list[int] = []
     try:
         cgroup_path = next(

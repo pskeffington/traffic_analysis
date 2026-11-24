@@ -2,9 +2,9 @@
 set -euo pipefail
 
 readonly repo="${HOME}/github/traffic_analysis"
-readonly share="${HOME}/Research.Databases"
-readonly checkpoint="${share}/audio_ingest/transcription.sqlite.gz"
-readonly snapshot_dir="${share}/traffic_analysis"
+readonly expected_source="${TRAFFIC_ANALYSIS_RESEARCH_SOURCE:-//archive.local/research}"
+readonly checkpoint="${HOME}/Research.Databases/audio_ingest/transcription.sqlite.gz"
+readonly snapshot_dir="${HOME}/Research.Databases/traffic_analysis"
 readonly model="${HOME}/.local/share/llama.cpp/cache/models--lmstudio-community--Qwen3.5-9B-GGUF/snapshots/1379f25c6b505a3fc737bd7818cb09389cf807c1/Qwen3.5-9B-Q4_K_M.gguf"
 readonly expected_model_sha256="cd76ec205963b3b33350093e6904d9de16c4e666fd104e1f632d25c7f15f2a13"
 readonly unit_dir="${HOME}/.config/systemd/user"
@@ -15,12 +15,19 @@ die() {
   exit 1
 }
 
-mount_source="$(findmnt -n -o SOURCE -T "${share}")"
-mount_type="$(findmnt -n -o FSTYPE -T "${share}")"
-mount_options="$(findmnt -n -o OPTIONS -T "${share}")"
-[[ "${mount_source,,}" == "//archive.local/research" ]] || die "Research.Databases is not mounted from //archive.local/research"
-[[ "${mount_type}" == "cifs" ]] || die "Research.Databases is not a CIFS mount"
-[[ ",${mount_options}," == *,rw,* ]] || die "Research.Databases is not mounted read-write"
+verify_mount() {
+  local path="$1"
+  local mount_source mount_type mount_options
+  mount_source="$(findmnt -n -o SOURCE -T "${path}")"
+  mount_type="$(findmnt -n -o FSTYPE -T "${path}")"
+  mount_options="$(findmnt -n -o OPTIONS -T "${path}")"
+  [[ "${mount_source,,}" == "${expected_source,,}" ]] || die "Research storage source does not match the configured SMB share"
+  [[ "${mount_type}" == "cifs" ]] || die "Research storage is not a CIFS mount"
+  [[ ",${mount_options}," == *,rw,* && ",${mount_options}," != *,ro,* ]] || die "Research storage is not mounted read-write"
+}
+
+verify_mount "${checkpoint}"
+verify_mount "${snapshot_dir}"
 
 [[ -r "${checkpoint}" ]] || die "TRANS checkpoint is not readable: ${checkpoint}"
 [[ -r "${model}" ]] || die "installed Qwen GGUF is not readable: ${model}"

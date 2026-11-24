@@ -7,6 +7,7 @@ import gzip
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import sys
@@ -20,6 +21,9 @@ from traffic_analysis.cli import main  # noqa: E402
 
 
 MAX_TRANSCRIPT_DB_BYTES = 8 * 1024**3
+RESEARCH_SOURCE = os.environ.get(
+    "TRAFFIC_ANALYSIS_RESEARCH_SOURCE", "//archive.local/research"
+).casefold().rstrip("/")
 ANALYSIS_HOME = Path.home() / ".local/share/traffic-analysis"
 DEFAULT_TRANS_CHECKPOINT = Path.home() / "Research.Databases/audio_ingest/transcription.sqlite.gz"
 DEFAULT_ANALYSIS_SNAPSHOT = Path.home() / "Research.Databases/traffic_analysis/traffic-analysis.sqlite"
@@ -39,6 +43,47 @@ def require_integrity(path: Path) -> None:
         result = db.execute("PRAGMA integrity_check").fetchone()
     if not result or result[0] != "ok":
         raise RuntimeError("sqlite_integrity_check_failed")
+
+
+def _mount_field(value: str) -> str:
+    return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
+
+
+def _mount_for(path: Path) -> tuple[str, str, set[str]] | None:
+    resolved = path.resolve()
+    selected: tuple[int, int, str, str, set[str]] | None = None
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+            mount_id = int(fields[0])
+            mountpoint = Path(_mount_field(fields[4]))
+            if mountpoint != resolved and mountpoint not in resolved.parents:
+                continue
+            filesystem = fields[separator + 1]
+            source = _mount_field(fields[separator + 2]).casefold()
+            options = set(fields[5].split(",")) | set(fields[separator + 3].split(","))
+        except (IndexError, ValueError):
+            continue
+        candidate = (len(mountpoint.parts), mount_id, filesystem, source, options)
+        if selected is None or candidate[:2] > selected[:2]:
+            selected = candidate
+    if selected is None:
+        return None
+    return selected[2], selected[3], selected[4]
+
+
+def _require_research_mount(path: Path) -> None:
+    mount = _mount_for(path)
+    if (mount is None or mount[0].casefold() != "cifs" or
+            mount[1].rstrip("/") != RESEARCH_SOURCE or
+            "rw" not in mount[2] or "ro" in mount[2]):
+        raise RuntimeError("research_share_not_mounted_from_expected_rw_source")
+
+
+def verify_research_mount(checkpoint: Path, snapshot: Path) -> None:
+    for path in (checkpoint, snapshot.parent):
+        _require_research_mount(path)
 
 
 def restore_snapshot(snapshot: Path, database: Path) -> None:
@@ -89,6 +134,7 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
 
 def publish_snapshot(database: Path, snapshot: Path) -> str:
     require_integrity(database)
+    _require_research_mount(snapshot.parent)
     snapshot.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if snapshot.parent.stat().st_mode & 0o077:
         raise RuntimeError("analysis_snapshot_directory_is_not_private")
@@ -111,8 +157,12 @@ def publish_snapshot(database: Path, snapshot: Path) -> str:
         if temporary.stat().st_size != database.stat().st_size:
             raise RuntimeError("analysis_snapshot_copy_size_mismatch")
         os.replace(temporary, snapshot)
+        with snapshot.open("rb") as published_file:
+            published_digest = hashlib.file_digest(published_file, "sha256").hexdigest()
+        if published_digest != digest.hexdigest():
+            raise RuntimeError("analysis_snapshot_copy_digest_mismatch")
         require_integrity(snapshot)
-        return digest.hexdigest()
+        return published_digest
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -156,6 +206,7 @@ def main_cycle() -> int:
                 raise RuntimeError("llama_server_not_found")
             server = Path(found)
 
+        verify_research_mount(checkpoint, snapshot)
         restore_snapshot(snapshot, database)
         with tempfile.TemporaryDirectory(prefix="traffic-analysis-cycle-") as temp:
             trans_database = inflate_trans_checkpoint(checkpoint, Path(temp))
