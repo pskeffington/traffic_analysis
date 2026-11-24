@@ -30,6 +30,7 @@ python examples/create_synthetic_trans_db.py /tmp/traffic-analysis-demo/trans.sq
 traffic-analysis --database /tmp/traffic-analysis-demo/analysis.sqlite \
   import-trans --trans-database /tmp/traffic-analysis-demo/trans.sqlite
 traffic-analysis --database /tmp/traffic-analysis-demo/analysis.sqlite report
+traffic-analysis --database /tmp/traffic-analysis-demo/analysis.sqlite call-types
 traffic-analysis --database /tmp/traffic-analysis-demo/analysis.sqlite \
   candidates --state pending
 traffic-analysis --database /tmp/traffic-analysis-demo/analysis.sqlite events
@@ -66,15 +67,38 @@ The deterministic extractor creates directed `RADIO_CONTACT` candidates only for
 
 Every candidate begins pending review. Identifiers are scoped to a TRANS `call_id`; similar labels are never merged, and a radio identifier is not treated as a person or organization. The Arch Notebook view is a read-only projection. The current TRANS interface supplies transcript-level review state, so pending source text cannot be promoted here. Traffic Analysis never fabricates source approval or edits TRANS text.
 
+## Call type labels
+
+Every TRANS-labeled `speech` segment receives deterministic, overlapping text labels for `fire`, `police`, `ems`, `bus`, `school`, `traffic`, `electrical`, `public_works`, `hazmat`, and `weather`; unmatched speech is `unclassified`. `call-types` reports aggregate label counts without transcript text. A segment may count under more than one label (for example, school and bus). These labels are triage summaries of words in the transcript, not verified incident classifications and not network connections. `audible_event` and `uncertain` segments are kept separate and receive no call-type label.
+
+## Optional local neural analysis
+
+For model-assisted speech triage, install llama.cpp locally and provide an existing GGUF model file. No weights are downloaded. `neural-classify` starts llama.cpp on a private Unix socket for one resumable batch, stores model and prompt versions with each proposal, and stops the process afterward. Model labels and summaries begin pending review; the Arch Notebook classifications view requires both analyst acceptance and TRANS source status `accepted` or `corrected`.
+
+```sh
+traffic-analysis --database /path/to/private/traffic-analysis.sqlite \
+  neural-classify --model /path/to/local/model.gguf --limit 1000
+traffic-analysis --database /path/to/private/traffic-analysis.sqlite \
+  neural-results --state pending
+```
+
+Review proposals only after the corresponding TRANS segment is accepted or corrected:
+
+```sh
+traffic-analysis --database /path/to/private/traffic-analysis.sqlite \
+  neural-review ANALYSIS_ID --state accepted --reviewer analyst-id
+```
+
+This inference path uses a private temporary Unix socket and standard-library HTTP framing; it opens no IP listener and does not contact a remote model service. See [the neural engine contract](docs/neural_engine.md) for validation and downstream view semantics.
+
 ## Data handling
 
 - Keep source databases, imported transcript text, analysis databases, and review notes in private local storage.
 - Never commit corpus records, exported transcripts, analysis databases, screenshots, logs containing text, or identifying source metadata.
-- The repository demo contains synthetic text only. No runtime network access or telemetry is implemented.
+- The repository demo contains synthetic text only. There is no external network access or telemetry; optional neural inference uses a temporary private Unix socket.
 - Use only data you are authorized to process and follow the TRANS source's access and retention rules.
 
 See [the production plan](docs/PRODUCTION_PLAN.md) for current implementation status and remaining integration gates.
-
 See the [text-classification literature matrix](docs/literature_matrix.md) for evidence, limits, and recommended validation practice for radio call-type labels.
 
 ## License
