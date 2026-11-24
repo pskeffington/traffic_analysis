@@ -11,7 +11,12 @@ import sqlite3
 import stat
 from typing import Any
 
-from .patterns import classify_message, radio_contact
+from .patterns import (
+    classify_call_types,
+    classify_message,
+    normalize_identifier,
+    radio_contact,
+)
 
 SCHEMA = """
 PRAGMA foreign_keys=ON;
@@ -44,9 +49,44 @@ CREATE TABLE IF NOT EXISTS analysis_records (
   segment_id TEXT NOT NULL,
   content_kind TEXT NOT NULL,
   message_kind TEXT NOT NULL,
+  call_type TEXT NOT NULL DEFAULT 'unclassified',
   created_at TEXT NOT NULL,
   FOREIGN KEY(source_id,profile_name,profile_version,segment_id)
     REFERENCES transcript_segments(source_id,profile_name,profile_version,segment_id)
+);
+CREATE TABLE IF NOT EXISTS neural_analyses (
+  analysis_id TEXT PRIMARY KEY,
+  record_id TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  model_manifest_sha256 TEXT NOT NULL DEFAULT 'unknown',
+  engine_version TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  labels TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  uncertainty TEXT NOT NULL CHECK(uncertainty IN ('low','medium','high')),
+  output_json TEXT NOT NULL,
+  output_sha256 TEXT NOT NULL,
+  review_state TEXT NOT NULL DEFAULT 'pending'
+    CHECK(review_state IN ('pending','accepted','rejected')),
+  reviewer TEXT,
+  analyst_note TEXT,
+  created_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  FOREIGN KEY(record_id) REFERENCES analysis_records(record_id)
+);
+CREATE INDEX IF NOT EXISTS idx_neural_review
+  ON neural_analyses(review_state,model_id,created_at);
+CREATE TABLE IF NOT EXISTS neural_failures (
+  record_id TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  model_manifest_sha256 TEXT NOT NULL,
+  engine_version TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error_type TEXT NOT NULL,
+  last_attempt_at TEXT NOT NULL,
+  PRIMARY KEY(record_id,model_id,model_manifest_sha256,engine_version,prompt_version),
+  FOREIGN KEY(record_id) REFERENCES analysis_records(record_id)
 );
 CREATE TABLE IF NOT EXISTS connection_candidates (
   candidate_id TEXT PRIMARY KEY,
@@ -109,6 +149,27 @@ JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_
 WHERE c.review_state='accepted'
   AND s.source_review_status IN ('accepted','corrected')
   AND s.content_kind='speech';
+CREATE VIEW IF NOT EXISTS arch_notebook_classifications AS
+SELECT n.analysis_id AS classification_id,
+       n.labels AS call_types,
+       n.summary AS summary,
+       n.uncertainty AS model_uncertainty,
+       s.occurred_at AS date,
+       s.text AS source_text,
+       s.text_sha256 AS source_text_sha256,
+       'TRANS:' || s.source_id || '/' || s.profile_name || '/' ||
+         s.profile_version || '/' || s.segment_id AS source_reference,
+       n.model_id,
+       n.model_manifest_sha256,
+       n.engine_version,
+       n.prompt_version,
+       n.output_sha256 AS analysis_sha256
+FROM neural_analyses n
+JOIN analysis_records a USING(record_id)
+JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
+WHERE n.review_state='accepted'
+  AND s.content_kind='speech'
+  AND s.source_review_status IN ('accepted','corrected');
 """
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -143,6 +204,15 @@ def open_store(path: Path) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    analysis_columns = {row[1] for row in db.execute("PRAGMA table_info(analysis_records)")}
+    if "call_type" not in analysis_columns:
+        db.execute(
+            "ALTER TABLE analysis_records ADD COLUMN call_type TEXT NOT NULL DEFAULT 'unclassified'"
+        )
+    neural_columns = {row[1] for row in db.execute("PRAGMA table_info(neural_analyses)")}
+    if neural_columns and "model_manifest_sha256" not in neural_columns:
+        db.execute("ALTER TABLE neural_analyses ADD COLUMN model_manifest_sha256 TEXT "
+                   "NOT NULL DEFAULT 'unknown'")
     db.commit()
     return db
 
@@ -227,6 +297,8 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
             profile = (row["profile_name"], row["profile_version"])
             segment_id = str(row["sequence"])
             key = (row["source_id"], *profile, segment_id)
+            message_kind = classify_message(text) if kind == "speech" else kind
+            call_type = classify_call_types(text) if kind == "speech" else "not_applicable"
             existing = db.execute(
                 "SELECT call_id,started_at,start_ms,end_ms,text_sha256,transcript_sha256,"
                 "provenance_sha256,content_kind,source_review_status,confidence,"
@@ -252,10 +324,6 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
                       SET content_kind=?,source_review_status=?
                       WHERE source_id=? AND profile_name=? AND profile_version=? AND segment_id=?""",
                       (kind, source_review, *key))
-                    db.execute("""UPDATE analysis_records SET content_kind=?,message_kind=?
-                      WHERE record_id=?""",
-                      (kind, classify_message(text) if kind == "speech" else kind,
-                       _digest_id(*key)))
                     if kind == "audible_event":
                         db.execute("""INSERT OR REPLACE INTO audible_events
                           (source_id,profile_name,profile_version,segment_id,text,start_ms,end_ms,
@@ -265,6 +333,9 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
                     else:
                         db.execute("DELETE FROM audible_events WHERE source_id=? AND profile_name=? "
                                    "AND profile_version=? AND segment_id=?", key)
+                db.execute("""UPDATE analysis_records
+                   SET content_kind=?,message_kind=?,call_type=? WHERE record_id=?""",
+                   (kind, message_kind, call_type, _digest_id(*key)))
                 counts["unchanged"] += 1
                 continue
             now = _utc_now()
@@ -281,9 +352,9 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
             record_id = _digest_id(*key)
             db.execute("""INSERT INTO analysis_records
               (record_id,source_id,profile_name,profile_version,segment_id,content_kind,
-               message_kind,created_at) VALUES(?,?,?,?,?,?,?,?)""",
+               message_kind,call_type,created_at) VALUES(?,?,?,?,?,?,?,?,?)""",
               (record_id, *key[:1], *key[1:3], key[3], kind,
-               classify_message(text) if kind == "speech" else kind, now))
+               message_kind, call_type, now))
             if kind == "audible_event":
                 db.execute("""INSERT INTO audible_events
                   (source_id,profile_name,profile_version,segment_id,text,start_ms,end_ms,
@@ -331,6 +402,139 @@ def analyze_pending(db: sqlite3.Connection) -> dict[str, int]:
     return {"created": created}
 
 
+def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: str,
+                         model_manifest_sha256: str, classify: Any,
+                         engine_version: str, prompt_version: str,
+                         limit: int) -> dict[str, int]:
+    """Store validated local model proposals and only evidence-verified radio contacts."""
+    if not 1 <= limit <= 1000:
+        raise ValueError("limit_must_be_between_1_and_1000")
+    records = db.execute("""SELECT s.*,a.record_id,a.message_kind
+      FROM transcript_segments s JOIN analysis_records a
+      USING(source_id,profile_name,profile_version,segment_id)
+      WHERE s.content_kind='speech' AND NOT EXISTS (
+        SELECT 1 FROM neural_analyses n WHERE n.record_id=a.record_id
+          AND n.model_id=? AND n.model_manifest_sha256=?
+          AND n.engine_version=? AND n.prompt_version=?)
+      ORDER BY s.occurred_at,s.source_id,s.start_ms LIMIT ?""",
+      (model_id, model_manifest_sha256, engine_version, prompt_version, limit)).fetchall()
+    counts: dict[str, Any] = {
+        "analyzed": 0, "failed": 0, "contact_candidates": 0,
+        "failure_types": {},
+    }
+    from .neural import validate_analysis
+
+    try:
+        for row in records:
+            try:
+                result = classify(socket_path, model_id, row["text"], row["message_kind"])
+                result = validate_analysis(result, row["text"])
+            except (OSError, ValueError, RuntimeError) as exc:
+                counts["failed"] += 1
+                error_type = type(exc).__name__
+                failure_types = counts["failure_types"]
+                failure_types[error_type] = failure_types.get(error_type, 0) + 1
+                db.execute("""INSERT INTO neural_failures
+                  (record_id,model_id,model_manifest_sha256,engine_version,prompt_version,
+                   attempt_count,last_error_type,last_attempt_at)
+                  VALUES(?,?,?,?,?,1,?,?)
+                  ON CONFLICT(record_id,model_id,model_manifest_sha256,engine_version,
+                              prompt_version)
+                  DO UPDATE SET attempt_count=attempt_count+1,
+                    last_error_type=excluded.last_error_type,
+                    last_attempt_at=excluded.last_attempt_at""",
+                  (row["record_id"], model_id, model_manifest_sha256, engine_version,
+                   prompt_version, error_type, _utc_now()))
+                db.commit()
+                continue
+            key = (row["source_id"], row["profile_name"], row["profile_version"],
+                   row["segment_id"])
+            record_id = row["record_id"]
+            analysis_id = _digest_id("neural-analysis/v1", record_id, model_id,
+                                     model_manifest_sha256, engine_version, prompt_version)
+            output_json = json.dumps(result, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":"))
+            output_sha = hashlib.sha256(output_json.encode("utf-8")).hexdigest()
+            labels = ";".join(item["label"] for item in result["labels"]) or "unclassified"
+            db.execute("""INSERT OR IGNORE INTO neural_analyses
+              (analysis_id,record_id,model_id,model_manifest_sha256,engine_version,
+               prompt_version,labels,
+               summary,uncertainty,output_json,output_sha256,created_at)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (analysis_id, record_id, model_id, model_manifest_sha256, engine_version,
+               prompt_version,
+               labels, result["summary"], result["uncertainty"], output_json,
+               output_sha, _utc_now()))
+            db.execute("""DELETE FROM neural_failures WHERE record_id=? AND model_id=?
+              AND model_manifest_sha256=? AND engine_version=? AND prompt_version=?""",
+              (record_id, model_id, model_manifest_sha256, engine_version, prompt_version))
+            for item in result["contacts"]:
+                explicit = radio_contact(item["evidence"])
+                if not explicit:
+                    continue
+                origin, addressee, _ = explicit
+                if (normalize_identifier(item["origin"]) != origin or
+                    normalize_identifier(item["addressee"]) != addressee):
+                    continue
+                candidate_id = _digest_id("neural-radio-contact/v1", *key, origin,
+                                          addressee, item["evidence"])
+                cursor = db.execute("""INSERT OR IGNORE INTO connection_candidates
+                  (candidate_id,source_id,call_id,profile_name,profile_version,segment_id,
+                   source_entity_id,target_entity_id,source_identifier,target_identifier,
+                   relationship,extraction_pattern,review_state,created_at)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,'RADIO_CONTACT',?,'pending',?)""",
+                  (candidate_id, row["source_id"], row["call_id"], row["profile_name"],
+                   row["profile_version"], row["segment_id"],
+                   _radio_entity_id(row["call_id"], origin),
+                   _radio_entity_id(row["call_id"], addressee), origin, addressee,
+                   "neural_explicit_contact", _utc_now()))
+                counts["contact_candidates"] += cursor.rowcount
+            counts["analyzed"] += 1
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return counts
+
+
+def review_neural_analysis(db: sqlite3.Connection, analysis_id: str, state: str,
+                           reviewer: str, note: str = "") -> None:
+    if state not in {"accepted", "rejected"}:
+        raise ValueError("review_state_must_be_accepted_or_rejected")
+    if not reviewer.strip():
+        raise ValueError("reviewer_required")
+    row = db.execute("""SELECT s.source_review_status FROM neural_analyses n
+      JOIN analysis_records a USING(record_id)
+      JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
+      WHERE n.analysis_id=?""", (analysis_id,)).fetchone()
+    if row is None:
+        raise ValueError("neural_analysis_not_found")
+    if state == "accepted" and row["source_review_status"] not in {"accepted", "corrected"}:
+        raise ValueError("trans_segment_not_accepted_by_trans")
+    db.execute("""UPDATE neural_analyses SET review_state=?,reviewer=?,analyst_note=?,
+      reviewed_at=? WHERE analysis_id=?""",
+      (state, reviewer.strip(), note.strip(), _utc_now(), analysis_id))
+    db.commit()
+
+
+def list_neural_analyses(db: sqlite3.Connection, state: str,
+                         limit: int) -> list[dict[str, Any]]:
+    if state not in {"pending", "accepted", "rejected"}:
+        raise ValueError("invalid_neural_review_state")
+    if not 1 <= limit <= 1000:
+        raise ValueError("limit_must_be_between_1_and_1000")
+    rows = db.execute("""SELECT n.analysis_id,n.model_id,n.model_manifest_sha256,
+      n.engine_version,
+      n.prompt_version,n.labels,n.summary,n.uncertainty,n.output_json,n.review_state,
+      s.source_id,s.segment_id,s.start_ms,s.occurred_at,s.text,s.text_sha256,
+      s.source_review_status
+      FROM neural_analyses n JOIN analysis_records a USING(record_id)
+      JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
+      WHERE n.review_state=? ORDER BY n.created_at,s.source_id,s.start_ms LIMIT ?""",
+      (state, limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def review_candidate(db: sqlite3.Connection, candidate_id: str, state: str,
                      reviewer: str, note: str = "") -> None:
     if state not in {"accepted", "rejected"}:
@@ -354,6 +558,17 @@ def review_candidate(db: sqlite3.Connection, candidate_id: str, state: str,
 def connection_counts(db: sqlite3.Connection) -> dict[str, int]:
     return {row[0]: row[1] for row in db.execute(
         "SELECT review_state,count(*) FROM connection_candidates GROUP BY review_state")}
+
+
+def call_type_counts(db: sqlite3.Connection) -> dict[str, int]:
+    """Count speech call-type labels; a segment can contribute to several labels."""
+    counts: dict[str, int] = {}
+    for (value,) in db.execute(
+        "SELECT call_type FROM analysis_records WHERE content_kind='speech'"
+    ):
+        for label in value.split(";"):
+            counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def list_candidates(db: sqlite3.Connection, state: str, limit: int) -> list[dict[str, Any]]:
