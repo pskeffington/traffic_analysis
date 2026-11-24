@@ -44,7 +44,7 @@ traffic-analysis --database /tmp/traffic-analysis-demo/analysis.sqlite \
   --note 'Verified against the synthetic source segment'
 ```
 
-Arch Notebook can read the `arch_notebook_connections` SQL view. A row appears only after the candidate is accepted and the corresponding TRANS text review state is `accepted` or `corrected`.
+Arch Notebook can read the `arch_notebook_connections` SQL view. A row appears only after the candidate is accepted and the corresponding TRANS text review state is `accepted` or `corrected`. If a neural classification for the same segment is also analyst-accepted, its call types and summary appear as connection properties in that row; this adds context to an explicit radio contact without inventing a new edge.
 
 ## Import a TRANS database
 
@@ -89,7 +89,7 @@ traffic-analysis --database /path/to/private/traffic-analysis.sqlite \
   neural-review ANALYSIS_ID --state accepted --reviewer analyst-id
 ```
 
-This inference path uses a private temporary Unix socket and standard-library HTTP framing; it opens no IP listener and does not contact a remote model service. See [the neural engine contract](docs/neural_engine.md) for validation and downstream view semantics.
+This inference path uses a private temporary Unix socket and standard-library HTTP framing; it opens no IP listener and does not contact a remote model service. To expose an accepted classification with an explicit contact, query `arch_notebook_connections`; see [the neural engine contract](docs/neural_engine.md) for validation and downstream view semantics.
 
 ## Data handling
 
