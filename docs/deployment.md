@@ -46,7 +46,9 @@ The installer also creates `~/Desktop/Run Traffic Analysis Now.desktop`. Use
 it for a manual cycle when the user systemd bus is unavailable. It invokes the
 same guarded runner directly; the persistent single-writer lock prevents it
 from overlapping an active timer cycle. The terminal remains open to show
-aggregate status and any safe error codes.
+aggregate status and any safe error codes. A private mode-0600 log is also
+written to `~/.local/share/traffic-analysis/interactive-cycle.log` so the
+operator can inspect the outcome after the terminal closes.
 
 Inspect operation with:
 
