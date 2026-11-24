@@ -17,17 +17,20 @@ die() {
 
 verify_mount() {
   local path="$1"
+  local access="$2"
   local mount_source mount_type mount_options
   mount_source="$(findmnt -n -o SOURCE -T "${path}")"
   mount_type="$(findmnt -n -o FSTYPE -T "${path}")"
   mount_options="$(findmnt -n -o OPTIONS -T "${path}")"
   [[ "${mount_source,,}" == "${expected_source,,}" ]] || die "Research storage source does not match the configured SMB share"
   [[ "${mount_type}" == "cifs" ]] || die "Research storage is not a CIFS mount"
-  [[ ",${mount_options}," == *,rw,* && ",${mount_options}," != *,ro,* ]] || die "Research storage is not mounted read-write"
+  if [[ "${access}" == "write" ]]; then
+    [[ ",${mount_options}," == *,rw,* && ",${mount_options}," != *,ro,* ]] || die "Research analysis storage is not mounted read-write"
+  fi
 }
 
-verify_mount "${checkpoint}"
-verify_mount "${snapshot_dir}"
+verify_mount "${checkpoint}" "read"
+verify_mount "${snapshot_dir}" "write"
 
 [[ -r "${checkpoint}" ]] || die "TRANS checkpoint is not readable: ${checkpoint}"
 [[ -r "${model}" ]] || die "installed Qwen GGUF is not readable: ${model}"

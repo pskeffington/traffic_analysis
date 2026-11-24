@@ -82,19 +82,21 @@ def _descriptor_mount_id(descriptor_fd: int) -> int:
     raise RuntimeError("descriptor_mount_id_unavailable")
 
 
-def _require_research_mount(path: Path, descriptor_fd: int | None = None) -> None:
+def _require_research_mount(path: Path, descriptor_fd: int | None = None,
+                            writable: bool = True) -> None:
     mount = _mount_for(path)
     if (mount is None or mount[1].casefold() != "cifs" or
-            mount[2].rstrip("/") != RESEARCH_SOURCE or
-            "rw" not in mount[3] or "ro" in mount[3]):
-        raise RuntimeError("research_share_not_mounted_from_expected_rw_source")
+            mount[2].rstrip("/") != RESEARCH_SOURCE):
+        raise RuntimeError("research_share_not_mounted_from_expected_source")
+    if writable and ("rw" not in mount[3] or "ro" in mount[3]):
+        raise RuntimeError("research_analysis_directory_not_mounted_read_write")
     if descriptor_fd is not None and _descriptor_mount_id(descriptor_fd) != mount[0]:
         raise RuntimeError("research_descriptor_is_not_on_current_share_mount")
 
 
 def verify_research_mount(checkpoint: Path, snapshot: Path) -> None:
-    for path in (checkpoint, snapshot.parent):
-        _require_research_mount(path)
+    _require_research_mount(checkpoint, writable=False)
+    _require_research_mount(snapshot.parent, writable=True)
 
 
 def research_file_sha256(path: Path) -> str:
@@ -194,7 +196,7 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         source_fd = os.open(checkpoint, flags)
         with os.fdopen(source_fd, "rb") as compressed:
-            _require_research_mount(checkpoint, compressed.fileno())
+            _require_research_mount(checkpoint, compressed.fileno(), writable=False)
             with gzip.GzipFile(fileobj=compressed, mode="rb") as source, target.open("xb") as output:
                 while True:
                     block = source.read(1024 * 1024)
@@ -206,7 +208,7 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
                     output.write(block)
                 output.flush()
                 os.fsync(output.fileno())
-            _require_research_mount(checkpoint, compressed.fileno())
+            _require_research_mount(checkpoint, compressed.fileno(), writable=False)
         os.chmod(target, 0o600)
         require_integrity(target)
     except Exception:

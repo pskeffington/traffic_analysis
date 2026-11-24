@@ -36,9 +36,11 @@ read-only inputs.
 
 Click `~/Desktop/Deploy Traffic Analysis.desktop`, or run
 `tools/install-user-service.sh` from a terminal. The installer verifies the
-Research CIFS source and read-write mount, checkpoint readability, and the
-pinned Qwen model checksum before it reloads systemd, enables the hourly timer,
-and starts the initial batch. It does not use sudo.
+TRANS checkpoint's CIFS source and readability, the Research output directory's
+CIFS read-write mount, and the pinned Qwen model checksum before it reloads
+systemd, enables the hourly timer, and starts the initial batch. It does not use
+sudo. The service keeps the checkpoint read-only and writes only to the analysis
+directory on the Research share.
 
 Inspect operation with:
 
