@@ -54,3 +54,7 @@ The current TRANS audio SQL schema still fixes transcript review state to `pendi
 ## Development
 
 Python 3.11+; runtime uses only the standard library. Tests have not yet been added or run.
+
+## Repository sweep and change control
+
+Documentation and maintenance passes follow the generalized [repository sweep decision-routing policy](https://github.com/pskeffington/agent_skills/blob/main/docs/REPO_SWEEP_DECISION_ROUTING.md). Transcript provenance, explicit candidate review, upstream TRANS review-state support, and downstream export eligibility remain separate acceptance gates.
