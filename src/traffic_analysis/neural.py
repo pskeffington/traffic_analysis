@@ -277,7 +277,7 @@ def local_engine(server_binary: str | None, model_path: Path,
     socket_path = Path(temporary.name) / "inference.sock"
     command = [binary, "--model", str(model), "--host", str(socket_path),
                "--no-webui", "--log-disable", "--ctx-size", "4096",
-               "--parallel", "1"]
+               "--parallel", "1", "--reasoning", "off"]
     try:
         with open(os.devnull, "wb") as quiet:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
@@ -408,7 +408,6 @@ def classify_segment(socket_path: Path, model_name: str, text: str,
         "stream": False,
         # Qwen reasoning can consume the completion budget and llama.cpp's
         # schema grammar is not enforced while thinking remains enabled.
-        "reasoning_effort": "none",
         "chat_template_kwargs": {"enable_thinking": False},
         "response_format": {"type": "json_schema", "json_schema": {
             "name": "radio_segment_triage", "strict": True,
