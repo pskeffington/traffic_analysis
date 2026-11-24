@@ -56,8 +56,13 @@ def create_database(path: Path) -> None:
             timestamp = "2026-01-01T12:00:00+00:00"
             segments = (
                 (0, 0, 2200, "UNIT 12 to DISPATCH, request traffic control.", "speech"),
-                (1, 2400, 4100, "[crowd cheering]", "audible_event"),
-                (2, 4300, 5200, "[unintelligible radio traffic]", "uncertain"),
+                (1, 2300, 4200, "Engine 2 reports a structure fire; Battalion 3 responding.", "speech"),
+                (2, 4300, 5900, "Police unit 14 en route to a traffic stop.", "speech"),
+                (3, 6000, 7600, "Medic 4 transporting a patient to hospital.", "speech"),
+                (4, 7700, 9300, "School bus 15 stopped near campus; students are safe.", "speech"),
+                (5, 9400, 11100, "Downed power line across roadway; utility crew requested.", "speech"),
+                (6, 11300, 13000, "[crowd cheering]", "audible_event"),
+                (7, 13200, 14100, "[unintelligible radio traffic]", "uncertain"),
             )
             transcript_text = "\n".join(row[3] for row in segments)
             db.execute(
