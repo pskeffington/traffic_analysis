@@ -363,17 +363,6 @@ def run_cli(database: Path, *args: str) -> None:
 
 
 
-def needs_bounded_failure_diagnostic(database: Path) -> bool:
-    with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True) as db:
-        analyses = db.execute("SELECT COUNT(*) FROM neural_analyses").fetchone()[0]
-        failures, max_attempt = db.execute(
-            "SELECT COUNT(*),MAX(attempt_count) FROM neural_failures"
-        ).fetchone()
-        speech = db.execute(
-            "SELECT COUNT(*) FROM analysis_records WHERE content_kind='speech'"
-        ).fetchone()[0]
-    return failures > 0 and analyses == 0 and max_attempt < 2
-
 def main_cycle() -> int:
     os.umask(0o077)
     data_home = configured_path("TRAFFIC_ANALYSIS_DATA_HOME", ANALYSIS_HOME)
@@ -415,27 +404,8 @@ def main_cycle() -> int:
             restore_snapshot(snapshot, database)
             trans_database = inflate_trans_checkpoint(checkpoint, working_directory)
             run_cli(database, "import-trans", "--trans-database", str(trans_database))
-            neural_args = ["neural-classify", "--model", str(model),
-                           "--llama-server", str(server)]
-            if needs_bounded_failure_diagnostic(database):
-                print("Retrying one previously failed segment for bounded diagnostics",
-                      file=sys.stderr)
-                run_cli(database, *neural_args, "--limit", "1", "--retry-failures")
-            else:
-                with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True) as db:
-                    analyses = db.execute(
-                        "SELECT COUNT(*) FROM neural_analyses"
-                    ).fetchone()[0]
-                    failures, speech = db.execute(
-                        "SELECT COUNT(*), (SELECT COUNT(*) FROM analysis_records "
-                        "WHERE content_kind='speech') FROM neural_failures"
-                    ).fetchone()
-                if speech and failures >= speech and analyses == 0:
-                    print("All speech segments have recorded neural failures; "
-                          "skipping automatic retries until operator action or new model",
-                          file=sys.stderr)
-                else:
-                    run_cli(database, *neural_args, "--limit", "1")
+            run_cli(database, "neural-classify", "--model", str(model),
+                    "--llama-server", str(server), "--limit", "1000")
             run_cli(database, "report")
             digest = publish_snapshot(database, snapshot)
         if legacy_duplicate_digest:

@@ -415,10 +415,33 @@ def analyze_pending(db: sqlite3.Connection) -> dict[str, int]:
 def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: str,
                          model_manifest_sha256: str, classify: Any,
                          engine_version: str, prompt_version: str,
-                         limit: int) -> dict[str, int]:
+                         limit: int, retry_failures: bool = False) -> dict[str, int]:
     """Store validated local model proposals and only evidence-verified radio contacts."""
     if not 1 <= limit <= 1000:
         raise ValueError("limit_must_be_between_1_and_1000")
+    counts: dict[str, Any] = {
+        "analyzed": 0, "failed": 0, "contact_candidates": 0,
+        "failure_types": {},
+    }
+    if not retry_failures:
+        prior_analyses = db.execute("""SELECT COUNT(*) FROM neural_analyses
+          WHERE model_id=? AND model_manifest_sha256=? AND engine_version=?
+            AND prompt_version=?""",
+          (model_id, model_manifest_sha256, engine_version, prompt_version)).fetchone()[0]
+        failure_count, max_attempt = db.execute("""SELECT COUNT(*),MAX(attempt_count)
+          FROM neural_failures WHERE model_id=? AND model_manifest_sha256=?
+            AND engine_version=? AND prompt_version=?""",
+          (model_id, model_manifest_sha256, engine_version, prompt_version)).fetchone()
+        if prior_analyses == 0:
+            if failure_count and max_attempt >= 2:
+                counts["paused"] = 1
+                return counts
+            if failure_count:
+                retry_failures = True
+                limit = 1
+                counts["diagnostic_retry"] = 1
+            else:
+                limit = 1
     records = db.execute("""SELECT s.*,a.record_id,a.message_kind
       FROM transcript_segments s JOIN analysis_records a
       USING(source_id,profile_name,profile_version,segment_id)
@@ -426,12 +449,14 @@ def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: st
         SELECT 1 FROM neural_analyses n WHERE n.record_id=a.record_id
           AND n.model_id=? AND n.model_manifest_sha256=?
           AND n.engine_version=? AND n.prompt_version=?)
+        AND (? OR NOT EXISTS (
+          SELECT 1 FROM neural_failures f WHERE f.record_id=a.record_id
+            AND f.model_id=? AND f.model_manifest_sha256=?
+            AND f.engine_version=? AND f.prompt_version=?))
       ORDER BY s.occurred_at,s.source_id,s.start_ms LIMIT ?""",
-      (model_id, model_manifest_sha256, engine_version, prompt_version, limit)).fetchall()
-    counts: dict[str, Any] = {
-        "analyzed": 0, "failed": 0, "contact_candidates": 0,
-        "failure_types": {},
-    }
+      (model_id, model_manifest_sha256, engine_version, prompt_version,
+       int(retry_failures), model_id, model_manifest_sha256, engine_version,
+       prompt_version, limit)).fetchall()
     from .neural import validate_analysis
 
     try:
@@ -444,7 +469,7 @@ def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: st
                 exception_type = type(exc).__name__
                 reason = str(exc)
                 error_code = (f"{exception_type}:{reason}"
-                              if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}", reason)
+                              if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:=-]{0,125}", reason)
                               else exception_type)
                 failure_types = counts["failure_types"]
                 failure_types[error_code] = failure_types.get(error_code, 0) + 1
