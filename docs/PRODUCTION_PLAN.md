@@ -18,7 +18,7 @@ This document describes release gates without recording source transcript conten
 | M2 — Corpus operation | Repeatable private local import; source integrity preserved; aggregate status reporting; no corpus content in repository | Deployment-specific verification; keep its receipt and findings outside the public repository |
 | M3 — Arch Notebook regression | Approved rows only; capture a baseline and a later immutable snapshot; inspect additions/removals with evidence references | Partial; SQL projection documented, live handoff not verified |
 | M4 — Automation | Operator-selected cadence, idempotent runs, bounded local history, failure and last-success reporting | Not started |
-| M5 — Public release and family integration | License selected; privacy and dependency audit; approved family registration; independent malformed/stale/unauthorized review; reproducible package build; release owner approval | Not ready |
+| M5 — Public release and family integration | Privacy and dependency audit; approved family registration; independent malformed/stale/unauthorized review; reproducible package build; release owner approval | Not ready |
 
 ## Required invariants
 
