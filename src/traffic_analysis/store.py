@@ -441,9 +441,13 @@ def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: st
                 result = validate_analysis(result, row["text"])
             except (OSError, ValueError, RuntimeError) as exc:
                 counts["failed"] += 1
-                error_type = type(exc).__name__
+                exception_type = type(exc).__name__
+                reason = str(exc)
+                error_code = (f"{exception_type}:{reason}"
+                              if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}", reason)
+                              else exception_type)
                 failure_types = counts["failure_types"]
-                failure_types[error_type] = failure_types.get(error_type, 0) + 1
+                failure_types[error_code] = failure_types.get(error_code, 0) + 1
                 db.execute("""INSERT INTO neural_failures
                   (record_id,model_id,model_manifest_sha256,engine_version,prompt_version,
                    attempt_count,last_error_type,last_attempt_at)
@@ -454,7 +458,7 @@ def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: st
                     last_error_type=excluded.last_error_type,
                     last_attempt_at=excluded.last_attempt_at""",
                   (row["record_id"], model_id, model_manifest_sha256, engine_version,
-                   prompt_version, error_type, _utc_now()))
+                   prompt_version, error_code, _utc_now()))
                 db.commit()
                 continue
             key = (row["source_id"], row["profile_name"], row["profile_version"],
