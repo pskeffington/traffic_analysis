@@ -2,6 +2,10 @@
 
 The analyzer starts after TRANS has produced timestamped text segments and `content_kind`. It does not read audio, classify sound, or rewrite transcript text.
 
+## Call type triage labels
+
+Each segment marked `speech` is scanned for text-only, overlapping labels: `fire`, `police`, `ems`, `bus`, `school`, `traffic`, `electrical`, `public_works`, `hazmat`, and `weather`. Unmatched speech is `unclassified`. Use the `call-types` command for aggregate counts. A segment may receive multiple labels; labels are keyword-based triage aids, not verified incident types and not evidence of a connection. Segments marked `audible_event` or `uncertain` are never included in these speech counts.
+
 ## Patterns preserved or extracted
 
 - **Addressing/contact:** `UNIT 12 to DISPATCH`, `DISPATCH, this is UNIT 12`, and `DISPATCH from UNIT 12` produce a directed `RADIO_CONTACT` candidate from the origin identifier to the addressee.
