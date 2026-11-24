@@ -48,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     neural.add_argument("--llama-server", help="path to llama-server; otherwise search PATH")
     neural.add_argument("--limit", type=int, default=1000,
                         help="maximum new speech segments per run (1..1000)")
+    neural.add_argument("--retry-failures", action="store_true",
+                        help="explicitly retry prior failures for the active model configuration")
     neural.add_argument("--startup-timeout", type=float, default=180.0)
     neural.add_argument("--allow-memory-overcommit", action="store_true",
                         help="start even when model shard bytes exceed currently available RAM")
@@ -94,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
                     result = analyze_neural_batch(
                         db, socket_path, model_id, model_manifest_sha256,
                         classify_segment, engine_version or ENGINE_VERSION,
-                        PROMPT_VERSION, args.limit,
+                        PROMPT_VERSION, args.limit, args.retry_failures,
                     )
             elif args.action == "neural-results":
                 result = list_neural_analyses(db, args.state, args.limit)
