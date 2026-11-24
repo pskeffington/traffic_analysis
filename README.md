@@ -74,3 +74,7 @@ Every candidate begins pending review. Identifiers are scoped to a TRANS `call_i
 - Use only data you are authorized to process and follow the TRANS source's access and retention rules.
 
 See [the production plan](docs/PRODUCTION_PLAN.md) for current implementation status and remaining integration gates.
+
+## License
+
+This project is distributed under the MIT License. See [LICENSE](LICENSE).
