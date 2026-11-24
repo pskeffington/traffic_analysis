@@ -372,7 +372,7 @@ def needs_bounded_failure_diagnostic(database: Path) -> bool:
         speech = db.execute(
             "SELECT COUNT(*) FROM analysis_records WHERE content_kind='speech'"
         ).fetchone()[0]
-    return failures > 0 and analyses == 0 and max_attempt <= 2
+    return failures > 0 and analyses == 0 and max_attempt < 2
 
 def main_cycle() -> int:
     os.umask(0o077)
