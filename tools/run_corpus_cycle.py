@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
 import sys
 import tempfile
 import uuid
@@ -362,6 +363,28 @@ def run_cli(database: Path, *args: str) -> None:
         raise RuntimeError(f"traffic_analysis_command_failed:{args[0]}:{code}")
 
 
+def memory_overcommit_operator_opt_in(data_home: Path) -> bool:
+    """Read a private local marker for a deliberately reviewed memory override."""
+    marker = data_home / "allow-memory-overcommit"
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(marker, flags)
+    except FileNotFoundError:
+        return False
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            raise RuntimeError("memory_override_marker_must_be_private_regular_file")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as marker_file:
+            descriptor = -1
+            if marker_file.read(128).strip() != "operator-reviewed-host-memory":
+                raise RuntimeError("memory_override_marker_content_invalid")
+        return True
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 
 def main_cycle() -> int:
     os.umask(0o077)
@@ -404,8 +427,12 @@ def main_cycle() -> int:
             restore_snapshot(snapshot, database)
             trans_database = inflate_trans_checkpoint(checkpoint, working_directory)
             run_cli(database, "import-trans", "--trans-database", str(trans_database))
-            run_cli(database, "neural-classify", "--model", str(model),
-                    "--llama-server", str(server), "--limit", "1000")
+            neural_args = ["neural-classify", "--model", str(model),
+                           "--llama-server", str(server), "--limit", "1000"]
+            if memory_overcommit_operator_opt_in(data_home):
+                neural_args.append("--allow-memory-overcommit")
+                print("Using private operator-reviewed memory override", file=sys.stderr)
+            run_cli(database, *neural_args)
             run_cli(database, "report")
             digest = publish_snapshot(database, snapshot)
         if legacy_duplicate_digest:

@@ -56,6 +56,21 @@ model preflight uses Linux `MemAvailable`, honors a tighter active cgroup limit,
 and conservatively respects NUMA memory-node restrictions. Recheck host memory
 before moving the unit to another system.
 
+By default, neural startup refuses when model shard bytes exceed the estimated
+available RAM. On a host where an operator has reviewed accelerator visibility
+and observed memory and swap behavior, opt in with a private local marker:
+
+```sh
+install -d -m 700 "$HOME/.local/share/traffic-analysis"
+printf '%s\\n' operator-reviewed-host-memory > "$HOME/.local/share/traffic-analysis/allow-memory-overcommit"
+chmod 600 "$HOME/.local/share/traffic-analysis/allow-memory-overcommit"
+```
+
+The marker is local runtime configuration and is not stored in Git. Remove it
+to restore the default preflight. The override can make inference slow or
+exhaust host resources; review actual accelerator visibility and available
+swap before creating it.
+
 Set `TRAFFIC_ANALYSIS_TRANS_CHECKPOINT`, `TRAFFIC_ANALYSIS_SNAPSHOT`,
 `TRAFFIC_ANALYSIS_DATA_HOME`, `TRAFFIC_ANALYSIS_MODEL`, or
 `TRAFFIC_ANALYSIS_LLAMA_SERVER` in the user service environment to override
