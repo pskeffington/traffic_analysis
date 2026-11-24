@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly repo="${HOME}/github/traffic_analysis"
+readonly share="${HOME}/Research.Databases"
+readonly checkpoint="${share}/audio_ingest/transcription.sqlite.gz"
+readonly snapshot_dir="${share}/traffic_analysis"
+readonly model="${HOME}/.local/share/llama.cpp/cache/models--lmstudio-community--Qwen3.5-9B-GGUF/snapshots/1379f25c6b505a3fc737bd7818cb09389cf807c1/Qwen3.5-9B-Q4_K_M.gguf"
+readonly expected_model_sha256="cd76ec205963b3b33350093e6904d9de16c4e666fd104e1f632d25c7f15f2a13"
+readonly unit_dir="${HOME}/.config/systemd/user"
+readonly data_home="${HOME}/.local/share/traffic-analysis"
+
+die() {
+  printf 'Traffic Analysis deployment: %s\n' "$1" >&2
+  exit 1
+}
+
+mount_source="$(findmnt -n -o SOURCE -T "${share}")"
+mount_type="$(findmnt -n -o FSTYPE -T "${share}")"
+mount_options="$(findmnt -n -o OPTIONS -T "${share}")"
+[[ "${mount_source,,}" == "//archive.local/research" ]] || die "Research.Databases is not mounted from //archive.local/research"
+[[ "${mount_type}" == "cifs" ]] || die "Research.Databases is not a CIFS mount"
+[[ ",${mount_options}," == *,rw,* ]] || die "Research.Databases is not mounted read-write"
+
+[[ -r "${checkpoint}" ]] || die "TRANS checkpoint is not readable: ${checkpoint}"
+[[ -r "${model}" ]] || die "installed Qwen GGUF is not readable: ${model}"
+[[ -x "${HOME}/.local/bin/llama-server" ]] || die "llama-server is not executable"
+
+mkdir -p -m 0700 "${snapshot_dir}" "${data_home}"
+chmod 0700 "${data_home}"
+[[ -w "${snapshot_dir}" ]] || die "Research snapshot directory is not writable"
+
+actual_model_sha256="$(sha256sum "${model}" | cut -d ' ' -f 1)"
+[[ "${actual_model_sha256}" == "${expected_model_sha256}" ]] || die "installed Qwen model checksum does not match the pinned artifact"
+
+mkdir -p -m 0700 "${unit_dir}"
+ln -sfn "${repo}/systemd/traffic-analysis.service" "${unit_dir}/traffic-analysis.service"
+ln -sfn "${repo}/systemd/traffic-analysis.timer" "${unit_dir}/traffic-analysis.timer"
+systemctl --user daemon-reload
+systemctl --user enable --now traffic-analysis.timer
+systemctl --user start --no-block traffic-analysis.service
+systemctl --user --no-pager status traffic-analysis.service traffic-analysis.timer

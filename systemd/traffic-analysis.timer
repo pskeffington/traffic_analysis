@@ -1,0 +1,11 @@
+[Unit]
+Description=Recheck the TRANS checkpoint for new radio speech each hour
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=traffic-analysis.service
+
+[Install]
+WantedBy=timers.target
