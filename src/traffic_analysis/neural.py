@@ -95,6 +95,8 @@ def _request_json(socket_path: Path, route: str,
         if not 200 <= response.status < 300:
             raise ValueError("local_model_http_request_failed")
         raw = response.read(1_048_577)
+    except http.client.HTTPException as exc:
+        raise ValueError("local_model_http_protocol_error") from exc
     finally:
         connection.close()
     if len(raw) > 1_048_576:
@@ -126,6 +128,16 @@ def _available_memory_bytes() -> int:
     return available
 
 
+def _server_environment() -> dict[str, str]:
+    """Pass only execution, locale, and accelerator library settings to llama.cpp."""
+    environment = {"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+    for key in ("LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES",
+                "HIP_VISIBLE_DEVICES", "GGML_VK_VISIBLE_DEVICES"):
+        if key in os.environ:
+            environment[key] = os.environ[key]
+    return environment
+
+
 @contextmanager
 def local_engine(server_binary: str | None, model_path: Path,
                  startup_timeout: float = 180.0,
@@ -138,9 +150,14 @@ def local_engine(server_binary: str | None, model_path: Path,
     binary = server_binary or shutil.which("llama-server")
     if not binary:
         raise ValueError("llama_server_not_found_configure_binary")
-    version = subprocess.run([binary, "--version"], stdin=subprocess.DEVNULL,
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                             check=True, timeout=10, text=True).stdout.splitlines()
+    server_env = _server_environment()
+    try:
+        version = subprocess.run([binary, "--version"], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 check=True, timeout=10, text=True,
+                                 env=server_env).stdout.splitlines()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("llama_server_version_check_failed") from exc
     engine_version = (version[0].strip()[:160] if version else ENGINE_VERSION)
     shard_match = re.search(r"-(\d+)-of-(\d+)\.gguf$", model.name)
     manifest = []
@@ -170,11 +187,6 @@ def local_engine(server_binary: str | None, model_path: Path,
     command = [binary, "--model", str(model), "--host", str(socket_path),
                "--no-webui", "--log-disable", "--ctx-size", "4096",
                "--parallel", "1"]
-    server_env = {"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
-    for key in ("LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES",
-                "HIP_VISIBLE_DEVICES", "GGML_VK_VISIBLE_DEVICES"):
-        if key in os.environ:
-            server_env[key] = os.environ[key]
     try:
         with open(os.devnull, "wb") as quiet:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
@@ -290,7 +302,7 @@ def validate_analysis(value: Any, transcript: str) -> dict[str, Any]:
 def classify_segment(socket_path: Path, model_name: str, text: str,
                      message_kind: str) -> dict[str, Any]:
     """Run one schema-constrained local completion; transcript is data, not prompt."""
-    if len(text) > 16_000:
+    if len(text) > 6_000:
         raise ValueError("transcript_segment_exceeds_neural_input_limit")
     user_data = json.dumps({"content_kind": "speech", "message_kind": message_kind,
                             "transcript_text_untrusted": text}, ensure_ascii=False)
