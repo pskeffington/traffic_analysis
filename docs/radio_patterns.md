@@ -16,7 +16,7 @@ The patterns are deliberately conservative. An edge means only that a transcript
 
 ## Reference basis
 
-The patterns reflect general structural features found across published radio procedures: identify a station and caller, acknowledge receipt, report status, and keep messages clear. FEMA's NIMS guidance favors plain language across incident-management organizations. Local fire dispatch procedures show common patterns such as unit-number acknowledgments, en-route and on-scene reports, and channel changes. These are examples, not a claim that every agency or the Room 237 corpus follows the same terminology.
+The patterns reflect general structural features found across published radio procedures: identify a station and caller, acknowledge receipt, report status, and keep messages clear. FEMA's NIMS guidance favors plain language across incident-management organizations. Local fire dispatch procedures show common patterns such as unit-number acknowledgments, en-route and on-scene reports, and channel changes. These are examples, not a claim that every agency follows the same terminology.
 
 Ten-codes and other agency-specific shorthand vary by jurisdiction. This version recognizes `10-4` only as an acknowledgment label; it does not map a code to a meaning or use a code as a connection. Add corpus-specific dictionaries only after review against the relevant radio-service procedure.
 
