@@ -148,9 +148,9 @@ def _available_memory_bytes() -> int:
             if line.startswith("Mems_allowed_list:")
         )
         allowed = parse_node_ids(allowed_line.split(":", 1)[1])
-        if online and not allowed:
+        if not online or not allowed:
             raise ValueError("numa_allowed_memory_nodes_unavailable")
-        numa_restricted = bool(online and allowed and not online.issubset(allowed))
+        numa_restricted = not online.issubset(allowed)
         if numa_restricted:
             free_bytes = 0
             for node in online & allowed:
@@ -163,10 +163,9 @@ def _available_memory_bytes() -> int:
                         break
             available = free_bytes if conservative == 0 else min(conservative, free_bytes)
     except (OSError, ValueError, StopIteration):
-        # If this process may be confined to a subset of NUMA nodes and we
-        # cannot read the node data, do not use host-wide MemAvailable.
-        available = conservative
-        numa_restricted = True
+        # Without allowed-node measurements, fail closed instead of allowing
+        # host-wide MemAvailable to overstate the memory this process can use.
+        return 0
     if not numa_restricted and memavailable is not None:
         available = max(available, memavailable)
     cgroup_limits: list[int] = []

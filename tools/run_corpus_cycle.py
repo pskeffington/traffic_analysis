@@ -50,7 +50,7 @@ def _mount_field(value: str) -> str:
     return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
 
 
-def _mount_for(path: Path) -> tuple[str, str, set[str]] | None:
+def _mount_for(path: Path) -> tuple[int, str, str, set[str]] | None:
     resolved = path.resolve()
     selected: tuple[int, int, str, str, set[str]] | None = None
     for line in Path("/proc/self/mountinfo").read_text().splitlines():
@@ -71,15 +71,24 @@ def _mount_for(path: Path) -> tuple[str, str, set[str]] | None:
             selected = candidate
     if selected is None:
         return None
-    return selected[2], selected[3], selected[4]
+    return selected[1], selected[2], selected[3], selected[4]
 
 
-def _require_research_mount(path: Path) -> None:
+def _descriptor_mount_id(descriptor_fd: int) -> int:
+    for line in Path(f"/proc/self/fdinfo/{descriptor_fd}").read_text().splitlines():
+        if line.startswith("mnt_id:"):
+            return int(line.split(":", 1)[1].strip())
+    raise RuntimeError("descriptor_mount_id_unavailable")
+
+
+def _require_research_mount(path: Path, descriptor_fd: int | None = None) -> None:
     mount = _mount_for(path)
-    if (mount is None or mount[0].casefold() != "cifs" or
-            mount[1].rstrip("/") != RESEARCH_SOURCE or
-            "rw" not in mount[2] or "ro" in mount[2]):
+    if (mount is None or mount[1].casefold() != "cifs" or
+            mount[2].rstrip("/") != RESEARCH_SOURCE or
+            "rw" not in mount[3] or "ro" in mount[3]):
         raise RuntimeError("research_share_not_mounted_from_expected_rw_source")
+    if descriptor_fd is not None and _descriptor_mount_id(descriptor_fd) != mount[0]:
+        raise RuntimeError("research_descriptor_is_not_on_current_share_mount")
 
 
 def verify_research_mount(checkpoint: Path, snapshot: Path) -> None:
@@ -103,14 +112,15 @@ def restore_snapshot(snapshot: Path, database: Path) -> None:
         os.close(directory_fd)
         raise RuntimeError("stale_analysis_restore_file_requires_operator_review")
     try:
-        _require_research_mount(snapshot.parent)
+        _require_research_mount(snapshot.parent, directory_fd)
         source_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         source_fd = os.open(snapshot.name, source_flags, dir_fd=directory_fd)
         with os.fdopen(source_fd, "rb") as source, temporary.open("xb") as output:
-            _require_research_mount(snapshot.parent)
+            _require_research_mount(snapshot, source.fileno())
             shutil.copyfileobj(source, output, length=1024 * 1024)
             output.flush()
             os.fsync(output.fileno())
+            _require_research_mount(snapshot, source.fileno())
         os.chmod(temporary, 0o600)
         require_integrity(temporary)
         os.replace(temporary, database)
@@ -129,7 +139,7 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         source_fd = os.open(checkpoint, flags)
         with os.fdopen(source_fd, "rb") as compressed:
-            _require_research_mount(checkpoint)
+            _require_research_mount(checkpoint, compressed.fileno())
             with gzip.GzipFile(fileobj=compressed, mode="rb") as source, target.open("xb") as output:
                 while True:
                     block = source.read(1024 * 1024)
@@ -141,6 +151,7 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
                     output.write(block)
                 output.flush()
                 os.fsync(output.fileno())
+            _require_research_mount(checkpoint, compressed.fileno())
         os.chmod(target, 0o600)
         require_integrity(target)
     except Exception:
@@ -157,7 +168,7 @@ def publish_snapshot(database: Path, snapshot: Path) -> str:
     temporary_name = f".{snapshot.name}.{uuid.uuid4().hex}.partial"
     digest = hashlib.sha256()
     try:
-        _require_research_mount(snapshot.parent)
+        _require_research_mount(snapshot.parent, directory_fd)
         if os.fstat(directory_fd).st_mode & 0o077:
             raise RuntimeError("analysis_snapshot_directory_is_not_private")
         file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
@@ -174,14 +185,16 @@ def publish_snapshot(database: Path, snapshot: Path) -> str:
         copied_stat = os.stat(temporary_name, dir_fd=directory_fd, follow_symlinks=False)
         if copied_stat.st_size != database.stat().st_size:
             raise RuntimeError("analysis_snapshot_copy_size_mismatch")
-        _require_research_mount(snapshot.parent)
+        _require_research_mount(snapshot.parent, directory_fd)
         os.replace(temporary_name, snapshot.name,
                    src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
         os.fsync(directory_fd)
         published_fd = os.open(snapshot.name, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
                                dir_fd=directory_fd)
         with os.fdopen(published_fd, "rb") as published_file:
+            _require_research_mount(snapshot, published_file.fileno())
             published_digest = hashlib.file_digest(published_file, "sha256").hexdigest()
+            _require_research_mount(snapshot, published_file.fileno())
         if published_digest != digest.hexdigest():
             raise RuntimeError("analysis_snapshot_copy_digest_mismatch")
         return published_digest
