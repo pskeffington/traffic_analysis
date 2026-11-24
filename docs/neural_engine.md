@@ -24,9 +24,9 @@ There is intentionally no numeric model confidence. Self-reported probabilities 
 2. Results begin `pending`. `neural-results` displays source text and proposed evidence for a local reviewer.
 3. A proposal cannot be accepted until TRANS marks the corresponding source segment `accepted` or `corrected`.
 4. Contact proposals create a pending `RADIO_CONTACT` candidate only if their exact quote independently matches the deterministic explicit-address parser and its parsed origin/addressee match the model fields. Candidate acceptance remains a separate review decision.
-5. `arch_notebook_classifications` contains only analyst-accepted proposals whose TRANS source is accepted/corrected. `arch_notebook_connections` continues to require an accepted connection candidate and accepted/corrected TRANS source.
+5. `arch_notebook_classifications` contains only analyst-accepted proposals whose TRANS source is accepted/corrected. `arch_notebook_connections` continues to require an accepted connection candidate and accepted/corrected TRANS source. When a segment has an accepted neural proposal, its type labels, summary, model identifier, uncertainty, and output digest are exposed as `connection_attribute:*` fields on that explicit contact row for Arch Notebook's existing SQL importer.
 
-The neural classification view is a SQL read-only projection for downstream review, not automatic publication or identity resolution. Rejected, pending, uncertain-source, and event-only rows do not appear in it.
+The neural classification view is a SQL read-only projection for downstream review, not automatic publication or identity resolution. Rejected, pending, uncertain-source, and event-only rows do not appear in it. A classification without a reviewed explicit radio contact remains available in `arch_notebook_classifications`, but is not converted into a graph edge.
 
 ## Operation
 
@@ -50,6 +50,7 @@ The shard manifest digest covers shard filenames and byte sizes; it is an identi
 - Confirm every model shard is readable and the model fits the host's memory/compute budget before processing a corpus.
 - Review the selected model's source, license, and redistribution/use terms; Traffic Analysis does not bundle model weights.
 - Confirm the selected model supports the local server's chat template and constrained JSON output.
+- Segments over the engine's 6,000-character input bound fail closed and remain available for manual review.
 - Run first on synthetic data, inspect outputs and failure behavior, then evaluate a source-grouped, adjudicated private sample.
 - Report per-label precision/recall/F1, support, common confusions, invalid-output rate, and review disagreement. Do not treat general benchmark results as corpus validation.
 - Keep the neural path opt-in until these checks pass. Deterministic keyword labels remain a separate baseline and are not silently overwritten by neural proposals.
