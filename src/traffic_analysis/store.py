@@ -222,7 +222,7 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
             source_review = row["review_status"]
             if source_review not in {"pending", "accepted", "corrected", "rejected"}:
                 raise ValueError("trans_review_state_unknown")
-            counts[kind] += 1
+            counts["audible_events" if kind == "audible_event" else kind] += 1
             counts["source_pending_segments"] += source_review == "pending"
             profile = (row["profile_name"], row["profile_version"])
             segment_id = str(row["sequence"])
