@@ -75,6 +75,8 @@ Every candidate begins pending review. Identifiers are scoped to a TRANS `call_i
 
 See [the production plan](docs/PRODUCTION_PLAN.md) for current implementation status and remaining integration gates.
 
+See the [text-classification literature matrix](docs/literature_matrix.md) for evidence, limits, and recommended validation practice for radio call-type labels.
+
 ## License
 
 This project is distributed under the MIT License. See [LICENSE](LICENSE).
