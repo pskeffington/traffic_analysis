@@ -17,7 +17,7 @@ import time
 from typing import Any, Iterator
 
 ENGINE_VERSION = "llama-server-json-v1"
-PROMPT_VERSION = "radio-segment-triage-v1"
+PROMPT_VERSION = "radio-segment-triage-v2"
 LABELS = (
     "fire", "police", "ems", "bus", "school", "traffic", "electrical",
     "public_works", "hazmat", "weather",
@@ -406,6 +406,10 @@ def classify_segment(socket_path: Path, model_name: str, text: str,
         "temperature": 0,
         "max_tokens": 1200,
         "stream": False,
+        # Qwen reasoning can consume the completion budget and llama.cpp's
+        # schema grammar is not enforced while thinking remains enabled.
+        "reasoning_effort": "none",
+        "chat_template_kwargs": {"enable_thinking": False},
         "response_format": {"type": "json_schema", "json_schema": {
             "name": "radio_segment_triage", "strict": True,
             "schema": _OUTPUT_SCHEMA,
