@@ -39,7 +39,7 @@ traffic-analysis --database /path/to/private/traffic-analysis.sqlite \
   neural-results --state pending --limit 50
 ```
 
-Successful segments are committed individually. Failures are counted by exception type in a local table without storing the transcript or error text. Re-running with the same model manifest, llama.cpp version, and prompt version skips completed rows and retries failed rows. Changing the model-shard manifest, engine version, or prompt version creates a distinct analysis record. Model weights and transcript rows remain local.
+Successful segments are committed individually. Failures are counted by a bounded, content-free error code in a local table without storing the transcript or model response. Scheduled cycles skip prior failures; an operator can explicitly retry them with `--retry-failures`. The production runner performs one bounded retry after an initial all-failure batch to capture structured completion diagnostics, then leaves repeated failures for operator action. Re-running with the same model manifest, llama.cpp version, and prompt version skips completed rows. Changing the model-shard manifest, engine version, or prompt version creates a distinct analysis record. Model weights and transcript rows remain local.
 
 Before starting the server, the engine compares model shard bytes with currently available system RAM (and the active cgroup memory limit when available) and refuses an obvious overcommit. `--allow-memory-overcommit` is available only for an operator who has checked GPU/accelerator offload and host memory behavior; it can still lead to a failed or extremely slow run.
 

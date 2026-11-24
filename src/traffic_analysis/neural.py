@@ -414,8 +414,20 @@ def classify_segment(socket_path: Path, model_name: str, text: str,
     response = _request_json(socket_path, "/v1/chat/completions", payload,
                              timeout=180.0)
     try:
-        content = response["choices"][0]["message"]["content"]
+        choice = response["choices"][0]
+        content = choice["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError("local_model_completion_fields_missing") from exc
+    if not isinstance(content, str):
+        raise ValueError(f"local_model_completion_content_type:{type(content).__name__}")
+    try:
         parsed = json.loads(content)
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise ValueError("local_model_returned_invalid_json_completion") from exc
+    except json.JSONDecodeError as exc:
+        finish_reason = choice.get("finish_reason")
+        if finish_reason not in {"stop", "length", "content_filter", "tool_calls"}:
+            finish_reason = "unknown"
+        raise ValueError(
+            f"local_model_returned_invalid_json_completion:finish={finish_reason}:"
+            f"chars={len(content)}:line={exc.lineno}:col={exc.colno}"
+        ) from exc
     return validate_analysis(parsed, text)
