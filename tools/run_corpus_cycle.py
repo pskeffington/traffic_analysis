@@ -99,7 +99,11 @@ def _require_research_mount(path: Path, descriptor_fd: int | None = None,
             mount[2].rstrip("/") != RESEARCH_SOURCE):
         raise RuntimeError("research_share_not_mounted_from_expected_source")
     if writable and ("rw" not in mount[3] or "ro" in mount[3]):
-        raise RuntimeError("research_analysis_directory_not_mounted_read_write")
+        access_flags = ",".join(flag for flag in ("ro", "rw") if flag in mount[3])
+        raise RuntimeError(
+            "research_analysis_directory_not_mounted_read_write"
+            f":mount_id={mount[0]}:access_flags={access_flags}"
+        )
     if descriptor_fd is not None and _descriptor_mount_id(descriptor_fd) != mount[0]:
         raise RuntimeError("research_descriptor_is_not_on_current_share_mount")
 
