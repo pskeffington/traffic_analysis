@@ -24,6 +24,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY / "src"))
 
 from traffic_analysis.cli import main  # noqa: E402
+from traffic_analysis.trans_sync import sync_trans_tables  # noqa: E402
 
 
 MAX_TRANSCRIPT_DB_BYTES = 8 * 1024**3
@@ -33,8 +34,11 @@ RESEARCH_SOURCE = os.environ.get(
     "TRAFFIC_ANALYSIS_RESEARCH_SOURCE", "//archive.local/research"
 ).casefold().rstrip("/")
 ANALYSIS_HOME = Path.home() / ".local/share/traffic-analysis"
-DEFAULT_TRANS_CHECKPOINT = Path.home() / "Research.Databases/audio_ingest/transcription.sqlite.gz"
-DEFAULT_ANALYSIS_SNAPSHOT = Path.home() / "Research.Databases/traffic_analysis/traffic-analysis.sqlite"
+DEFAULT_TRANS_CHECKPOINT = Path.home() / ".local/share/trans/audio-sql/trans-audio.sqlite.gz"
+DEFAULT_ANALYSIS_SNAPSHOT = Path.home() / "Research.Databases/research.sqlite"
+LEGACY_ANALYSIS_SNAPSHOT = (
+    Path.home() / "Research.Databases/traffic_analysis/traffic-analysis.sqlite"
+)
 DEFAULT_MODEL = (
     Path.home() / ".local/share/llama.cpp/cache/models--lmstudio-community--"
     "Qwen3.5-9B-GGUF/snapshots/1379f25c6b505a3fc737bd7818cb09389cf807c1/"
@@ -100,9 +104,26 @@ def _require_research_mount(path: Path, descriptor_fd: int | None = None,
         raise RuntimeError("research_descriptor_is_not_on_current_share_mount")
 
 
-def verify_research_mount(checkpoint: Path, snapshot: Path) -> None:
-    _require_research_mount(checkpoint, writable=False)
+def verify_research_mount(snapshot: Path) -> None:
     _require_research_mount(snapshot.parent, writable=True)
+
+
+def require_local_checkpoint(checkpoint: Path) -> None:
+    absolute_path = Path(os.path.abspath(checkpoint))
+    resolved_path = checkpoint.resolve(strict=True)
+    if resolved_path != absolute_path:
+        raise RuntimeError("trans_checkpoint_path_uses_symlink")
+    metadata = checkpoint.lstat()
+    directory_metadata = checkpoint.parent.lstat()
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077 or
+            metadata.st_uid != os.getuid() or not stat.S_ISDIR(directory_metadata.st_mode) or
+            directory_metadata.st_mode & 0o077 or directory_metadata.st_uid != os.getuid()):
+        raise RuntimeError("trans_checkpoint_is_not_a_private_regular_file")
+    mount = _mount_for(checkpoint)
+    if mount is None or mount[1].casefold() in {
+        "cifs", "smb3", "nfs", "nfs4", "sshfs", "fuse.sshfs"
+    }:
+        raise RuntimeError("trans_checkpoint_must_be_on_private_local_storage")
 
 
 def research_file_sha256(path: Path) -> str:
@@ -196,13 +217,13 @@ def remove_verified_legacy_duplicate(legacy: Path, expected_digest: str) -> None
 def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
     if not checkpoint.is_file():
         raise RuntimeError("trans_checkpoint_missing")
+    require_local_checkpoint(checkpoint)
     target = directory / "transcription.sqlite"
     written = 0
     try:
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         source_fd = os.open(checkpoint, flags)
         with os.fdopen(source_fd, "rb") as compressed:
-            _require_research_mount(checkpoint, compressed.fileno(), writable=False)
             with gzip.GzipFile(fileobj=compressed, mode="rb") as source, target.open("xb") as output:
                 while True:
                     block = source.read(1024 * 1024)
@@ -214,7 +235,7 @@ def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
                     output.write(block)
                 output.flush()
                 os.fsync(output.fileno())
-            _require_research_mount(checkpoint, compressed.fileno(), writable=False)
+            require_local_checkpoint(checkpoint)
         os.chmod(target, 0o600)
         require_integrity(target)
     except Exception:
@@ -433,14 +454,22 @@ def main_cycle() -> int:
                 raise RuntimeError("llama_server_not_found")
             server = Path(found)
 
-        verify_research_mount(checkpoint, snapshot)
-        legacy_database = data_home / "traffic-analysis.sqlite"
-        legacy_duplicate_digest = verify_legacy_duplicate(legacy_database, snapshot)
+        verify_research_mount(snapshot)
         with tempfile.TemporaryDirectory(prefix="traffic-analysis-cycle-") as temp:
             working_directory = Path(temp)
             database = working_directory / "traffic-analysis.sqlite"
-            restore_snapshot(snapshot, database)
+            restored = restore_snapshot(snapshot, database)
+            if not restored and snapshot != LEGACY_ANALYSIS_SNAPSHOT:
+                restore_snapshot(LEGACY_ANALYSIS_SNAPSHOT, database)
+            # Initialize/upgrade Traffic Analysis tables in this private working copy.
+            run_cli(database, "report")
             trans_database = inflate_trans_checkpoint(checkpoint, working_directory)
+            combined = sqlite3.connect(database)
+            try:
+                trans_sync = sync_trans_tables(trans_database, combined)
+            finally:
+                combined.close()
+            print(json.dumps({"trans_table_sync": trans_sync}, sort_keys=True), flush=True)
             run_cli(database, "import-trans", "--trans-database", str(trans_database))
             digest = publish_snapshot(database, snapshot)
             print(f"Research analysis snapshot updated after TRANS import; sha256={digest}",
@@ -489,8 +518,6 @@ def main_cycle() -> int:
                     break
             run_cli(database, "report")
             digest = research_file_sha256(snapshot)
-        if legacy_duplicate_digest:
-            remove_verified_legacy_duplicate(legacy_database, legacy_duplicate_digest)
         print(f"Research analysis snapshot updated; sha256={digest}", flush=True)
     return 0
 

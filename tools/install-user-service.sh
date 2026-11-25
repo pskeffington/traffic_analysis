@@ -3,8 +3,8 @@ set -euo pipefail
 
 readonly repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly default_research_source="//archive.local/research"
-readonly default_checkpoint="${HOME}/Research.Databases/audio_ingest/transcription.sqlite.gz"
-readonly default_snapshot="${HOME}/Research.Databases/traffic_analysis/traffic-analysis.sqlite"
+readonly default_checkpoint="${HOME}/.local/share/trans/audio-sql/trans-audio.sqlite.gz"
+readonly default_snapshot="${HOME}/Research.Databases/research.sqlite"
 readonly default_model="${HOME}/.local/share/llama.cpp/cache/models--lmstudio-community--Qwen3.5-9B-GGUF/snapshots/1379f25c6b505a3fc737bd7818cb09389cf807c1/Qwen3.5-9B-Q4_K_M.gguf"
 readonly default_model_sha256="cd76ec205963b3b33350093e6904d9de16c4e666fd104e1f632d25c7f15f2a13"
 
@@ -52,9 +52,9 @@ verify_mount() {
   local path="$1"
   local access="$2"
   local mount_source mount_type mount_options
-  mount_source="$(findmnt -n -o SOURCE -T "${path}")" || die "cannot determine mount source for ${path}"
-  mount_type="$(findmnt -n -o FSTYPE -T "${path}")" || die "cannot determine filesystem type for ${path}"
-  mount_options="$(findmnt -n -o OPTIONS -T "${path}")" || die "cannot determine mount options for ${path}"
+  mount_source="$(findmnt -n -o SOURCE -T "${path}" | tail -n 1)" || die "cannot determine mount source for ${path}"
+  mount_type="$(findmnt -n -o FSTYPE -T "${path}" | tail -n 1)" || die "cannot determine filesystem type for ${path}"
+  mount_options="$(findmnt -n -o OPTIONS -T "${path}" | tail -n 1)" || die "cannot determine mount options for ${path}"
   [[ "${mount_source,,}" == "${expected_source,,}" ]] || die "Research storage source does not match TRAFFIC_ANALYSIS_RESEARCH_SOURCE"
   [[ "${mount_type}" == "cifs" ]] || die "Research storage is not a CIFS mount"
   if [[ "${access}" == "write" ]]; then
@@ -84,12 +84,23 @@ done
 [[ -f "${desktop_template}" ]] || die "manual desktop template is missing from the repository"
 [[ -f "${deploy_desktop_template}" ]] || die "deploy desktop template is missing from the repository"
 
-verify_mount "${checkpoint}" "read"
 mount_probe="${snapshot_dir}"
 while [[ ! -e "${mount_probe}" && "${mount_probe}" != "/" ]]; do
   mount_probe="$(dirname -- "${mount_probe}")"
 done
 verify_mount "${mount_probe}" "write"
+
+[[ -f "${checkpoint}" && ! -L "${checkpoint}" && -r "${checkpoint}" ]] || die "TRANS checkpoint must be a readable regular local file"
+checkpoint_resolved="$(realpath -e -- "${checkpoint}")" || die "cannot resolve TRANS checkpoint path"
+[[ "${checkpoint_resolved}" == "${checkpoint}" ]] || die "TRANS checkpoint path must not resolve through a symlink"
+checkpoint_fstype="$(findmnt -n -o FSTYPE -T "${checkpoint}" | tail -n 1)" || die "cannot determine filesystem for TRANS checkpoint"
+case "${checkpoint_fstype}" in
+  cifs|smb3|nfs|nfs4|sshfs|fuse.sshfs) die "TRANS checkpoint must be on local storage" ;;
+esac
+checkpoint_mode="$(stat -c '%a' "${checkpoint}")" || die "cannot inspect TRANS checkpoint permissions"
+(( (8#${checkpoint_mode} & 077) == 0 )) || die "TRANS checkpoint must be owner-only"
+checkpoint_uid="$(stat -c '%u' "${checkpoint}")" || die "cannot inspect TRANS checkpoint owner"
+[[ "${checkpoint_uid}" == "$(id -u)" ]] || die "TRANS checkpoint must be owned by the current user"
 
 # Runtime state contains locks and operator logs; keep it on a local filesystem.
 data_probe="${data_home}"
