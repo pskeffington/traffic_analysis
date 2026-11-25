@@ -1,0 +1,8 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Deploy Traffic Analysis
+Comment=Verify local model and Research storage, then install and start the analysis service
+Exec=@REPOSITORY@/tools/install-user-service.sh
+Terminal=true
+Categories=Utility;System;

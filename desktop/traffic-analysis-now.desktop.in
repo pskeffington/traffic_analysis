@@ -1,0 +1,8 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Run Traffic Analysis Now
+Comment=Run a manual cycle with the saved Traffic Analysis paths and update the Research database
+Exec=@REPOSITORY@/tools/run-interactive-cycle.sh
+Terminal=true
+Categories=Utility;System;

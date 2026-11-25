@@ -9,13 +9,18 @@ import sys
 
 from .store import (
     analyze_pending,
+    analyze_neural_batch,
+    call_type_counts,
     connection_counts,
     import_trans,
+    list_neural_analyses,
     list_candidates,
     list_events,
     open_store,
     review_candidate,
+    review_neural_analysis,
 )
+from .neural import ENGINE_VERSION, PROMPT_VERSION, classify_segment, local_engine
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,6 +41,27 @@ def main(argv: list[str] | None = None) -> int:
     candidates.add_argument("--limit", type=int, default=50)
     events = sub.add_parser("events", help="show TRANS-labeled audible-event records")
     events.add_argument("--limit", type=int, default=50)
+    sub.add_parser("call-types", help="show aggregate speech call-type labels")
+    neural = sub.add_parser("neural-classify", help="classify speech with a private local llama.cpp model")
+    neural.add_argument("--model", type=Path, required=True,
+                        help="local GGUF model file; no model is downloaded")
+    neural.add_argument("--llama-server", help="path to llama-server; otherwise search PATH")
+    neural.add_argument("--limit", type=int, default=1000,
+                        help="maximum new speech segments per run (1..1000)")
+    neural.add_argument("--retry-failures", action="store_true",
+                        help="retry segments previously recorded as failed for this model and prompt")
+    neural.add_argument("--startup-timeout", type=float, default=180.0)
+    neural.add_argument("--allow-memory-overcommit", action="store_true",
+                        help="start even when model shard bytes exceed currently available RAM")
+    neural_results = sub.add_parser("neural-results", help="show local model proposals for review")
+    neural_results.add_argument("--state", choices=("pending", "accepted", "rejected"),
+                                default="pending")
+    neural_results.add_argument("--limit", type=int, default=50)
+    neural_review = sub.add_parser("neural-review", help="accept or reject a model proposal")
+    neural_review.add_argument("analysis_id")
+    neural_review.add_argument("--state", choices=("accepted", "rejected"), required=True)
+    neural_review.add_argument("--reviewer", required=True)
+    neural_review.add_argument("--note", default="")
     sub.add_parser("report", help="show aggregate counts without transcript text")
     args = parser.parse_args(argv)
     try:
@@ -54,8 +80,33 @@ def main(argv: list[str] | None = None) -> int:
                 if args.limit < 1 or args.limit > 1000:
                     raise ValueError("limit_must_be_between_1_and_1000")
                 result = list_events(db, args.limit)
+            elif args.action == "call-types":
+                result = call_type_counts(db)
+            elif args.action == "neural-classify":
+                if not 1 <= args.limit <= 1000:
+                    raise ValueError("limit_must_be_between_1_and_1000")
+                if not 10 <= args.startup_timeout <= 1800:
+                    raise ValueError("startup_timeout_must_be_between_10_and_1800_seconds")
+                with local_engine(args.llama_server, args.model,
+                                  args.startup_timeout,
+                                  args.allow_memory_overcommit) as (
+                                      socket_path, model_id, engine_version,
+                                      model_manifest_sha256
+                                  ):
+                    result = analyze_neural_batch(
+                        db, socket_path, model_id, model_manifest_sha256,
+                        classify_segment, engine_version or ENGINE_VERSION,
+                        PROMPT_VERSION, args.limit, args.retry_failures,
+                    )
+            elif args.action == "neural-results":
+                result = list_neural_analyses(db, args.state, args.limit)
+            elif args.action == "neural-review":
+                review_neural_analysis(db, args.analysis_id, args.state,
+                                       args.reviewer, args.note)
+                result = {"reviewed": args.analysis_id, "state": args.state}
             else:
                 result = {"connections": connection_counts(db),
+                          "call_types": call_type_counts(db),
                           "speech_segments": db.execute(
                               "SELECT count(*) FROM transcript_segments WHERE content_kind='speech'"
                           ).fetchone()[0],
@@ -64,10 +115,19 @@ def main(argv: list[str] | None = None) -> int:
                           ).fetchone()[0],
                           "arch_notebook_ready": db.execute(
                               "SELECT count(*) FROM arch_notebook_connections"
+                          ).fetchone()[0],
+                          "neural_analyses": {row[0]: row[1] for row in db.execute(
+                              "SELECT review_state,count(*) FROM neural_analyses "
+                              "GROUP BY review_state")},
+                          "neural_failure_attempts": db.execute(
+                              "SELECT coalesce(sum(attempt_count),0) FROM neural_failures"
+                          ).fetchone()[0],
+                          "arch_notebook_classifications_ready": db.execute(
+                              "SELECT count(*) FROM arch_notebook_classifications"
                           ).fetchone()[0]}
             print(json.dumps(result, sort_keys=True))
         return 0
-    except (OSError, ValueError, sqlite3.Error) as exc:
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
         print(f"traffic-analysis: {exc}", file=sys.stderr)
         return 2
 

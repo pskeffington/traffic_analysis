@@ -1,0 +1,22 @@
+[Unit]
+Description=Import TRANS speech and run local Traffic Analysis classification
+
+[Service]
+Type=oneshot
+WorkingDirectory=@WORKING_DIRECTORY@
+ExecStart=/usr/bin/python3 @RUNNER@
+EnvironmentFile=%h/.config/traffic-analysis/environment
+UMask=0077
+TimeoutStartSec=infinity
+Nice=10
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@DATA_HOME@ @SNAPSHOT_DIR@
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+Environment=PYTHONDONTWRITEBYTECODE=1
