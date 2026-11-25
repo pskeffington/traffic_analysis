@@ -17,7 +17,7 @@ import time
 from typing import Any, Iterator
 
 ENGINE_VERSION = "llama-server-json-v1"
-PROMPT_VERSION = "radio-segment-triage-v3"
+PROMPT_VERSION = "radio-segment-triage-v4"
 LABELS = (
     "fire", "police", "ems", "bus", "school", "traffic", "electrical",
     "public_works", "hazmat", "weather",
@@ -52,14 +52,24 @@ uncertain. Use low uncertainty when the words are clear, medium when some
 meaning is unresolved, and high when corruption or incompleteness prevents a
 reliable reading. Never guess through ASR errors.
 
+Work only from the transcript characters shown to you. You receive no audio:
+never claim that you heard or identified music, cheering, sirens, tones, or any
+other sound. If the segment contains only symbols, punctuation, or non-lexical
+marks and no words, return empty labels, station_mentions, contacts, and
+summary. Do not convert notation such as music-note symbols into an audio
+description. Mark a symbols-only segment high uncertainty because there is no
+linguistic content to assess.
+
 Each label must have one exact evidence quote copied from the transcript. The
 quote must support the category, not merely appear in the same segment. Never
 repeat a label. Station mentions must be radio identifiers/callsigns, not
 personal names or locations, with exact evidence quotes. A radio contact is a
 directed call only when the quoted words explicitly address one station from
 another; do not infer a contact from co-occurrence, status, topic, location, or
-timing. The summary must only paraphrase explicit content. No confidence number
-is requested because model self-reported confidence is not calibrated."""
+timing. The summary must only paraphrase explicit content from transcript
+words; it must not infer audio properties. Return an empty summary when there
+are no words to paraphrase. No confidence number is requested because model
+self-reported confidence is not calibrated."""
 
 _OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -427,6 +437,15 @@ def validate_analysis(value: Any, transcript: str) -> dict[str, Any]:
     if len(normalized_labels) != len(labels):
         value = dict(value)
         value["labels"] = normalized_labels
+    if not any(character.isalnum() for character in transcript):
+        # A symbols-only transcript carries no lexical evidence. Do not let a
+        # model turn notation such as "♪" into a claim about the audio.
+        value = dict(value)
+        value["labels"] = []
+        value["station_mentions"] = []
+        value["contacts"] = []
+        value["summary"] = ""
+        value["uncertainty"] = "high"
     return value
 
 

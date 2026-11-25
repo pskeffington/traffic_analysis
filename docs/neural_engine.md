@@ -16,11 +16,12 @@ For each speech segment, the model proposes:
 - radio-contact proposals with origin, addressee, and verbatim evidence;
 - a short transcript-grounded summary and qualitative uncertainty (`low`, `medium`, `high`).
 
-The prompt version 3 taxonomy and negative examples are documented in the
+The prompt version 4 taxonomy and negative examples are documented in the
 [radio call-type annotation guide](call_type_annotation.md). The prompt defines
 when a category is supported and when an empty label list is appropriate. These
-definitions improve task clarity but do not replace an adjudicated evaluation
-sample.
+definitions require summaries to stay within the transcript text, including an
+empty summary when a segment contains no words. They improve task clarity but
+do not replace an adjudicated evaluation sample.
 
 There is intentionally no numeric model confidence. Self-reported probabilities are not calibrated. The transcript is JSON-encoded as untrusted data in the prompt, and the model is told not to follow embedded instructions. The application then validates response shape, allowed labels, bounds, exact evidence substrings, and contact direction. These checks constrain outputs; they do not prove that a label or summary is semantically correct.
 

@@ -14,6 +14,11 @@ or an inferred relationship. Empty labels are valid for acknowledgments,
 routine status, addressing, and fragments with no supported topic. Preserve the
 source transcript exactly; do not repair ASR text while classifying it.
 
+Classification receives text only. Do not infer or describe audio properties
+such as music, cheering, sirens, or tones. If a segment contains only symbols
+or other non-lexical marks, leave labels, station mentions, contacts, and
+summary empty.
+
 ## Labels
 
 | Label | Apply when the segment explicitly concerns | Do not infer it from |
@@ -43,6 +48,8 @@ explicitly supports all three. Do not repeat a label.
 - Use low uncertainty when the words are clear, medium when part of the meaning
   is unresolved, and high when transcription corruption or incompleteness
   prevents a reliable reading. Short text alone is not high uncertainty.
+- If there are no alphanumeric transcript characters, leave labels, station
+  mentions, contacts, and summary empty; classify the result as high uncertainty.
 - When ASR corruption prevents a defensible label, leave the labels empty and
   preserve the uncertainty. Do not guess or rewrite the transcript.
 
