@@ -22,6 +22,15 @@ tables, imports text read-only into its derived tables, classifies speech, and
 atomically replaces the Research snapshot. This single-writer arrangement
 prevents stale TRANS checkpoints from overwriting newer analysis rows.
 
+For local neural startup failures, Traffic Analysis drains llama-server output
+while it waits for the private Unix-socket health check. It retains at most
+8 KiB in memory and reports that startup tail if the server exits before it is
+ready. After health succeeds, it clears the buffer and discards later output,
+so transcript requests are not retained in diagnostics. For service failures,
+inspect `journalctl --user -u traffic-analysis.service` and verify Research is
+writable from the same service context; a writable mount in an interactive
+shell alone does not prove the service can publish.
+
 ## Migration and rollback
 
 The migration starts from the verified existing Traffic Analysis snapshot and
