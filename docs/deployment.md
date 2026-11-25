@@ -2,7 +2,8 @@
 
 Traffic Analysis uses a user-level hourly oneshot service. It reads the TRANS
 recovery checkpoint, imports it read-only, runs a resumable local Qwen batch,
-then publishes the updated database to the Research share. SQLite changes are
+then publishes the updated database to the Research share after each bounded
+inference batch. SQLite changes are
 made in a private, temporary local working directory because direct SQLite
 writes to the mounted CIFS share fail during lock acquisition. The working copy
 is removed after each run; the Research share holds the one persistent Traffic
@@ -24,9 +25,14 @@ Analysis database, which Arch Notebook can open read-only.
 
 The service holds a local single-writer lock, verifies SQLite integrity,
 bounds checkpoint decompression, imports transcript text only, and atomically
-replaces the closed Research database after a completed cycle. Each run starts
-from that database, applies new imports and classifications locally, then
-removes its temporary copy. If an older persistent local database exists, the
+replaces the closed Research database after the import and each completed
+inference invocation. Each run starts from that database, applies imports and
+classifications in a private local working copy, publishes batches of up to 50
+neural attempts (with a 1,000-attempt cycle cap), then removes its temporary
+copy. A new model configuration begins with a one-segment probe. If a cycle
+stops during a batch, the last published Research snapshot retains earlier
+completed work and the next cycle resumes remaining records. If an older
+persistent local database exists, the
 service removes it only after verifying it is byte-identical to the Research
 database and successfully publishing the next Research version. It stops with
 an error and preserves the local database if the Research copy is missing or
@@ -47,6 +53,9 @@ CIFS read-write mount, and the expected checksum for the default Qwen model befo
 systemd, enables the hourly timer, and starts the initial batch. It does not use
 sudo. The service keeps the checkpoint read-only and writes only to the analysis
 directory on the Research share.
+The Traffic Analysis directory must be owner-only (mode `0700`) as reported by
+the mounted filesystem; the installer checks this before starting the service.
+The published SQLite file uses owner-only permissions (`0600`).
 
 The initial batch starts asynchronously so installation does not wait for a
 full corpus pass. A service state of `activating` with `SubState=start` means
@@ -71,9 +80,10 @@ systemctl --user status traffic-analysis.service traffic-analysis.timer
 journalctl --user -u traffic-analysis.service
 ```
 
-The first run imports the current TRANS checkpoint and classifies up to 1,000
-speech segments. Later hourly runs import new or changed records and skip model
-analyses already completed for the same model, prompt, and engine versions. The
+The first run imports the current TRANS checkpoint and makes up to 1,000 neural
+attempts, checkpointing in batches of up to 50. Later hourly runs import new or changed
+records and skip model analyses already completed for the same model, prompt,
+and engine versions. The
 model preflight uses Linux `MemAvailable`, honors a tighter active cgroup limit,
 and conservatively respects NUMA memory-node restrictions. Recheck host memory
 before moving the unit to another system.

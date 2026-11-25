@@ -73,7 +73,7 @@ Every TRANS-labeled `speech` segment receives deterministic, overlapping text la
 
 ## Optional local neural analysis
 
-For model-assisted speech triage, install llama.cpp locally and provide an existing GGUF model file. No weights are downloaded. `neural-classify` starts llama.cpp on a private Unix socket for one resumable batch, stores model and prompt versions with each proposal, and stops the process afterward. Model labels and summaries begin pending review; the Arch Notebook classifications view requires both analyst acceptance and TRANS source status `accepted` or `corrected`.
+For model-assisted speech triage, install llama.cpp locally and provide an existing GGUF model file. No weights are downloaded. `neural-classify` starts llama.cpp on a private Unix socket for one batch, stores model and prompt versions with each proposal, and stops the process afterward. The production runner checkpoints each batch of up to 50 attempts into the single Research database, with a 1,000-attempt cap per cycle, so later cycles can resume after interruption. A new model configuration starts with a one-segment probe. Model labels and summaries begin pending review; the Arch Notebook classifications view requires both analyst acceptance and TRANS source status `accepted` or `corrected`.
 
 ```sh
 traffic-analysis --database /path/to/private/traffic-analysis.sqlite \

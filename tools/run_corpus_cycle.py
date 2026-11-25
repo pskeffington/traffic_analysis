@@ -2,10 +2,12 @@
 """Run one private TRANS import/classification cycle and publish an SQLite snapshot."""
 from __future__ import annotations
 
-import fcntl
 import errno
+import fcntl
 import gzip
 import hashlib
+import io
+import json
 import os
 from pathlib import Path
 import re
@@ -15,6 +17,7 @@ import stat
 import sys
 import tempfile
 import uuid
+from contextlib import redirect_stdout
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -24,6 +27,8 @@ from traffic_analysis.cli import main  # noqa: E402
 
 
 MAX_TRANSCRIPT_DB_BYTES = 8 * 1024**3
+NEURAL_PUBLISH_BATCH_SIZE = 50
+NEURAL_CYCLE_ATTEMPT_LIMIT = 1000
 RESEARCH_SOURCE = os.environ.get(
     "TRAFFIC_ANALYSIS_RESEARCH_SOURCE", "//archive.local/research"
 ).casefold().rstrip("/")
@@ -334,7 +339,12 @@ def publish_snapshot(database: Path, snapshot: Path) -> str:
                                src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
                     backup_created = False
                 else:
+                    # Never leave an unverified first publication at the
+                    # canonical path, where the next cycle could trust it.
                     os.unlink(snapshot.name, dir_fd=directory_fd)
+                    print("warning: first Research snapshot publication failed verification; "
+                          "removed the untrusted file so the next cycle can rebuild from TRANS",
+                          file=sys.stderr)
                 _fsync_directory(directory_fd)
             except OSError as rollback_exc:
                 raise RuntimeError("analysis_snapshot_publish_and_rollback_failed") from rollback_exc
@@ -357,10 +367,16 @@ def publish_snapshot(database: Path, snapshot: Path) -> str:
         os.close(directory_fd)
 
 
-def run_cli(database: Path, *args: str) -> None:
-    code = main(["--database", str(database), *args])
+def run_cli(database: Path, *args: str) -> str:
+    captured = io.StringIO()
+    with redirect_stdout(captured):
+        code = main(["--database", str(database), *args])
+    output = captured.getvalue()
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
     if code != 0:
         raise RuntimeError(f"traffic_analysis_command_failed:{args[0]}:{code}")
+    return output
 
 
 def memory_overcommit_operator_opt_in(data_home: Path) -> bool:
@@ -426,14 +442,50 @@ def main_cycle() -> int:
             restore_snapshot(snapshot, database)
             trans_database = inflate_trans_checkpoint(checkpoint, working_directory)
             run_cli(database, "import-trans", "--trans-database", str(trans_database))
+            digest = publish_snapshot(database, snapshot)
+            print(f"Research analysis snapshot updated after TRANS import; sha256={digest}")
             neural_args = ["neural-classify", "--model", str(model),
-                           "--llama-server", str(server), "--limit", "1000"]
+                           "--llama-server", str(server)]
             if memory_overcommit_operator_opt_in(data_home):
                 neural_args.append("--allow-memory-overcommit")
                 print("Using private operator-reviewed memory override", file=sys.stderr)
-            run_cli(database, *neural_args)
+            batch_number = 0
+            attempted_this_cycle = 0
+            while True:
+                batch_number += 1
+                remaining = NEURAL_CYCLE_ATTEMPT_LIMIT - attempted_this_cycle
+                if remaining <= 0:
+                    break
+                batch_args = [*neural_args, "--limit", str(min(
+                    NEURAL_PUBLISH_BATCH_SIZE, remaining
+                ))]
+                try:
+                    batch_result = json.loads(run_cli(database, *batch_args))
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise RuntimeError("neural_batch_result_is_not_valid_json") from exc
+                if not isinstance(batch_result, dict) or any(
+                    not isinstance(batch_result.get(key, 0), int) or
+                    batch_result.get(key, 0) < 0
+                    for key in ("analyzed", "failed", "paused")
+                ):
+                    raise RuntimeError("neural_batch_result_schema_invalid")
+                digest = publish_snapshot(database, snapshot)
+                attempted = batch_result.get("analyzed", 0) + batch_result.get("failed", 0)
+                attempted_this_cycle += attempted
+                print(json.dumps({
+                    "checkpoint_batch": batch_number,
+                    "attempted_this_cycle": attempted_this_cycle,
+                    "analyzed": batch_result.get("analyzed", 0),
+                    "failed": batch_result.get("failed", 0),
+                    "paused": batch_result.get("paused", 0),
+                    "snapshot_sha256": digest,
+                }, sort_keys=True))
+                if batch_result.get("paused"):
+                    break
+                if not batch_result.get("analyzed", 0) and not batch_result.get("failed", 0):
+                    break
             run_cli(database, "report")
-            digest = publish_snapshot(database, snapshot)
+            digest = research_file_sha256(snapshot)
         if legacy_duplicate_digest:
             remove_verified_legacy_duplicate(legacy_database, legacy_duplicate_digest)
         print(f"Research analysis snapshot updated; sha256={digest}")
