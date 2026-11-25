@@ -467,7 +467,7 @@ def main_cycle() -> int:
                 if not isinstance(batch_result, dict) or any(
                     not isinstance(batch_result.get(key, 0), int) or
                     batch_result.get(key, 0) < 0
-                    for key in ("analyzed", "failed", "paused")
+                    for key in ("analyzed", "failed", "paused", "blocked_failures")
                 ):
                     raise RuntimeError("neural_batch_result_schema_invalid")
                 digest = publish_snapshot(database, snapshot)
@@ -479,9 +479,11 @@ def main_cycle() -> int:
                     "analyzed": batch_result.get("analyzed", 0),
                     "failed": batch_result.get("failed", 0),
                     "paused": batch_result.get("paused", 0),
+                    "blocked_failures": batch_result.get("blocked_failures", 0),
+                    "blocked_failure_types": batch_result.get("blocked_failure_types", {}),
                     "snapshot_sha256": digest,
                 }, sort_keys=True), flush=True)
-                if batch_result.get("paused"):
+                if batch_result.get("paused") or batch_result.get("blocked_failures"):
                     break
                 if not batch_result.get("analyzed", 0) and not batch_result.get("failed", 0):
                     break

@@ -493,8 +493,28 @@ def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: st
         raise ValueError("limit_must_be_between_1_and_1000")
     counts: dict[str, Any] = {
         "analyzed": 0, "failed": 0, "contact_candidates": 0,
-        "failure_types": {},
+        "failure_types": {}, "blocked_failures": 0,
+        "blocked_failure_types": {},
     }
+
+    def blocked_failure_summary() -> dict[str, int]:
+        rows = db.execute("""SELECT f.last_error_type,count(*)
+          FROM neural_failures f
+          JOIN analysis_records a USING(record_id)
+          JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
+          WHERE s.content_kind='speech' AND f.model_id=?
+            AND f.model_manifest_sha256=? AND f.engine_version=?
+            AND f.prompt_version=? AND f.attempt_count>=2
+            AND NOT EXISTS (
+              SELECT 1 FROM neural_analyses n WHERE n.record_id=f.record_id
+                AND n.model_id=f.model_id
+                AND n.model_manifest_sha256=f.model_manifest_sha256
+                AND n.engine_version=f.engine_version
+                AND n.prompt_version=f.prompt_version)
+          GROUP BY f.last_error_type""",
+          (model_id, model_manifest_sha256, engine_version, prompt_version)).fetchall()
+        return {row[0]: row[1] for row in rows}
+
     if not retry_failures:
         prior_analyses = db.execute("""SELECT COUNT(*) FROM neural_analyses
           WHERE model_id=? AND model_manifest_sha256=? AND engine_version=?
@@ -506,6 +526,10 @@ def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: st
           (model_id, model_manifest_sha256, engine_version, prompt_version)).fetchone()
         if prior_analyses == 0:
             if failure_count and max_attempt >= 2:
+                counts["blocked_failure_types"] = blocked_failure_summary()
+                counts["blocked_failures"] = sum(
+                    counts["blocked_failure_types"].values()
+                )
                 counts["paused"] = 1
                 return counts
             if failure_count:
@@ -533,6 +557,12 @@ def analyze_neural_batch(db: sqlite3.Connection, socket_path: Path, model_id: st
       (model_id, model_manifest_sha256, engine_version, prompt_version,
        int(retry_failures), model_id, model_manifest_sha256, engine_version,
        prompt_version, limit)).fetchall()
+    if not records:
+        # Distinguish a fully processed queue from speech segments suppressed
+        # after repeated malformed or unsupported model output. Keep the
+        # diagnostic aggregate free of source text and do not retry implicitly.
+        counts["blocked_failure_types"] = blocked_failure_summary()
+        counts["blocked_failures"] = sum(counts["blocked_failure_types"].values())
     from .neural import validate_analysis
 
     try:
