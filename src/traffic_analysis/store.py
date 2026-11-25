@@ -546,12 +546,14 @@ def review_neural_analysis(db: sqlite3.Connection, analysis_id: str, state: str,
         raise ValueError("review_state_must_be_accepted_or_rejected")
     if not reviewer.strip():
         raise ValueError("reviewer_required")
-    row = db.execute("""SELECT s.source_review_status FROM neural_analyses n
+    row = db.execute("""SELECT s.source_review_status,s.content_kind FROM neural_analyses n
       JOIN analysis_records a USING(record_id)
       JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
       WHERE n.analysis_id=?""", (analysis_id,)).fetchone()
     if row is None:
         raise ValueError("neural_analysis_not_found")
+    if state == "accepted" and row["content_kind"] != "speech":
+        raise ValueError("trans_segment_not_currently_classified_as_speech")
     if state == "accepted" and row["source_review_status"] not in {"accepted", "corrected"}:
         raise ValueError("trans_segment_not_accepted_by_trans")
     db.execute("""UPDATE neural_analyses SET review_state=?,reviewer=?,analyst_note=?,

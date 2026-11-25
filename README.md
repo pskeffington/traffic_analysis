@@ -89,6 +89,19 @@ traffic-analysis --database /path/to/private/traffic-analysis.sqlite \
   neural-review ANALYSIS_ID --state accepted --reviewer analyst-id
 ```
 
+For the deployed Research database, use the review helper instead of opening the
+share-hosted SQLite file directly. It locks against the production cycle, refreshes
+TRANS review state from the current checkpoint, and publishes a reviewed change
+through the verified snapshot path. `list` displays transcript text locally;
+`review` refuses acceptance unless TRANS currently labels the source as speech and
+marks its text accepted or corrected.
+
+```sh
+python3 tools/review_neural_proposal.py list --limit 50
+python3 tools/review_neural_proposal.py review ANALYSIS_ID \
+  --state accepted --reviewer analyst-id --note 'Verified against source text'
+```
+
 This inference path uses a private temporary Unix socket and standard-library HTTP framing; it opens no IP listener and does not contact a remote model service. To expose an accepted classification with an explicit contact, query `arch_notebook_connections`; see [the neural engine contract](docs/neural_engine.md) for validation and downstream view semantics.
 
 ## Data handling
