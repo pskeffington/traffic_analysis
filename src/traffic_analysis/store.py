@@ -21,6 +21,8 @@ from .patterns import (
 
 SCHEMA = """
 PRAGMA foreign_keys=ON;
+DROP VIEW IF EXISTS arch_notebook_connections;
+DROP VIEW IF EXISTS arch_notebook_classifications;
 CREATE TABLE IF NOT EXISTS transcript_segments (
   source_id TEXT NOT NULL,
   call_id INTEGER NOT NULL,
@@ -155,8 +157,11 @@ JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_
 LEFT JOIN analysis_records a USING(source_id,profile_name,profile_version,segment_id)
 LEFT JOIN neural_analyses n ON n.record_id=a.record_id
   AND n.analysis_id=(SELECT n2.analysis_id FROM neural_analyses n2
-    WHERE n2.record_id=a.record_id AND n2.review_state='accepted'
-    ORDER BY n2.reviewed_at DESC,n2.analysis_id DESC LIMIT 1)
+    WHERE n2.record_id=a.record_id
+    ORDER BY n2.created_at DESC,n2.analysis_id DESC LIMIT 1)
+  AND n.review_state='accepted'
+  AND NOT EXISTS (SELECT 1 FROM neural_failures f
+    WHERE f.record_id=n.record_id AND f.last_attempt_at>n.created_at)
 WHERE c.review_state='accepted'
   AND s.source_review_status IN ('accepted','corrected')
   AND s.content_kind='speech';
@@ -179,6 +184,11 @@ FROM neural_analyses n
 JOIN analysis_records a USING(record_id)
 JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
 WHERE n.review_state='accepted'
+  AND n.analysis_id=(SELECT n2.analysis_id FROM neural_analyses n2
+    WHERE n2.record_id=n.record_id
+    ORDER BY n2.created_at DESC,n2.analysis_id DESC LIMIT 1)
+  AND NOT EXISTS (SELECT 1 FROM neural_failures f
+    WHERE f.record_id=n.record_id AND f.last_attempt_at>n.created_at)
   AND s.content_kind='speech'
   AND s.source_review_status IN ('accepted','corrected');
 """
@@ -214,16 +224,21 @@ def open_store(path: Path) -> sqlite3.Connection:
         os.close(fd)
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
+    # Upgrade this legacy column before SCHEMA rebuilds views that reference it.
+    existing_tables = {row[0] for row in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "neural_analyses" in existing_tables:
+        neural_columns = {row[1] for row in db.execute(
+            "PRAGMA table_info(neural_analyses)")}
+        if "model_manifest_sha256" not in neural_columns:
+            db.execute("ALTER TABLE neural_analyses ADD COLUMN model_manifest_sha256 TEXT "
+                       "NOT NULL DEFAULT 'unknown'")
     db.executescript(SCHEMA)
     analysis_columns = {row[1] for row in db.execute("PRAGMA table_info(analysis_records)")}
     if "call_type" not in analysis_columns:
         db.execute(
             "ALTER TABLE analysis_records ADD COLUMN call_type TEXT NOT NULL DEFAULT 'unclassified'"
         )
-    neural_columns = {row[1] for row in db.execute("PRAGMA table_info(neural_analyses)")}
-    if neural_columns and "model_manifest_sha256" not in neural_columns:
-        db.execute("ALTER TABLE neural_analyses ADD COLUMN model_manifest_sha256 TEXT "
-                   "NOT NULL DEFAULT 'unknown'")
     db.commit()
     return db
 
@@ -648,7 +663,8 @@ def review_neural_analysis(db: sqlite3.Connection, analysis_id: str, state: str,
         raise ValueError("review_state_must_be_accepted_or_rejected")
     if not reviewer.strip():
         raise ValueError("reviewer_required")
-    row = db.execute("""SELECT s.source_review_status,s.content_kind FROM neural_analyses n
+    row = db.execute("""SELECT s.source_review_status,s.content_kind,n.record_id,
+      n.created_at FROM neural_analyses n
       JOIN analysis_records a USING(record_id)
       JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
       WHERE n.analysis_id=?""", (analysis_id,)).fetchone()
@@ -658,6 +674,18 @@ def review_neural_analysis(db: sqlite3.Connection, analysis_id: str, state: str,
         raise ValueError("trans_segment_not_currently_classified_as_speech")
     if state == "accepted" and row["source_review_status"] not in {"accepted", "corrected"}:
         raise ValueError("trans_segment_not_accepted_by_trans")
+    if state == "accepted":
+        newer = db.execute("""SELECT 1 FROM neural_analyses
+          WHERE record_id=? AND (created_at>? OR
+            (created_at=? AND analysis_id>?)) LIMIT 1""",
+          (row["record_id"], row["created_at"], row["created_at"], analysis_id)).fetchone()
+        if newer:
+            raise ValueError("neural_analysis_superseded")
+        failed_after = db.execute("""SELECT 1 FROM neural_failures
+          WHERE record_id=? AND last_attempt_at>? LIMIT 1""",
+          (row["record_id"], row["created_at"])).fetchone()
+        if failed_after:
+            raise ValueError("newer_neural_attempt_failed")
     db.execute("""UPDATE neural_analyses SET review_state=?,reviewer=?,analyst_note=?,
       reviewed_at=? WHERE analysis_id=?""",
       (state, reviewer.strip(), note.strip(), _utc_now(), analysis_id))
@@ -677,7 +705,13 @@ def list_neural_analyses(db: sqlite3.Connection, state: str,
       s.source_review_status
       FROM neural_analyses n JOIN analysis_records a USING(record_id)
       JOIN transcript_segments s USING(source_id,profile_name,profile_version,segment_id)
-      WHERE n.review_state=? ORDER BY n.created_at DESC,s.source_id,s.start_ms LIMIT ?""",
+      WHERE n.review_state=?
+        AND n.analysis_id=(SELECT n2.analysis_id FROM neural_analyses n2
+          WHERE n2.record_id=n.record_id
+          ORDER BY n2.created_at DESC,n2.analysis_id DESC LIMIT 1)
+        AND NOT EXISTS (SELECT 1 FROM neural_failures f
+          WHERE f.record_id=n.record_id AND f.last_attempt_at>n.created_at)
+      ORDER BY n.created_at DESC,s.source_id,s.start_ms LIMIT ?""",
       (state, limit)).fetchall()
     return [dict(row) for row in rows]
 
