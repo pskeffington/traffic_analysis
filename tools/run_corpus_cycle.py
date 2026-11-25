@@ -373,7 +373,7 @@ def run_cli(database: Path, *args: str) -> str:
         code = main(["--database", str(database), *args])
     output = captured.getvalue()
     if output:
-        print(output, end="" if output.endswith("\n") else "\n")
+        print(output, end="" if output.endswith("\n") else "\n", flush=True)
     if code != 0:
         raise RuntimeError(f"traffic_analysis_command_failed:{args[0]}:{code}")
     return output
@@ -443,7 +443,8 @@ def main_cycle() -> int:
             trans_database = inflate_trans_checkpoint(checkpoint, working_directory)
             run_cli(database, "import-trans", "--trans-database", str(trans_database))
             digest = publish_snapshot(database, snapshot)
-            print(f"Research analysis snapshot updated after TRANS import; sha256={digest}")
+            print(f"Research analysis snapshot updated after TRANS import; sha256={digest}",
+                  flush=True)
             neural_args = ["neural-classify", "--model", str(model),
                            "--llama-server", str(server)]
             if memory_overcommit_operator_opt_in(data_home):
@@ -479,7 +480,7 @@ def main_cycle() -> int:
                     "failed": batch_result.get("failed", 0),
                     "paused": batch_result.get("paused", 0),
                     "snapshot_sha256": digest,
-                }, sort_keys=True))
+                }, sort_keys=True), flush=True)
                 if batch_result.get("paused"):
                     break
                 if not batch_result.get("analyzed", 0) and not batch_result.get("failed", 0):
@@ -488,7 +489,7 @@ def main_cycle() -> int:
             digest = research_file_sha256(snapshot)
         if legacy_duplicate_digest:
             remove_verified_legacy_duplicate(legacy_database, legacy_duplicate_digest)
-        print(f"Research analysis snapshot updated; sha256={digest}")
+        print(f"Research analysis snapshot updated; sha256={digest}", flush=True)
     return 0
 
 
