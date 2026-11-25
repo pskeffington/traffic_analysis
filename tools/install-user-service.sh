@@ -47,6 +47,7 @@ readonly service_template="${repo}/systemd/traffic-analysis.service.in"
 readonly timer_source="${repo}/systemd/traffic-analysis.timer"
 readonly desktop_template="${repo}/desktop/traffic-analysis-now.desktop.in"
 readonly deploy_desktop_template="${repo}/desktop/traffic-analysis-deploy.desktop.in"
+readonly research_mount_helper="${repo}/tools/ensure-research-mount-writable.py"
 
 verify_mount() {
   local path="$1"
@@ -83,11 +84,13 @@ done
 [[ -f "${timer_source}" ]] || die "timer unit is missing from the repository"
 [[ -f "${desktop_template}" ]] || die "manual desktop template is missing from the repository"
 [[ -f "${deploy_desktop_template}" ]] || die "deploy desktop template is missing from the repository"
+[[ -f "${research_mount_helper}" ]] || die "Research mount helper is missing from the repository"
 
 mount_probe="${snapshot_dir}"
 while [[ ! -e "${mount_probe}" && "${mount_probe}" != "/" ]]; do
   mount_probe="$(dirname -- "${mount_probe}")"
 done
+python3 "${research_mount_helper}" "${mount_probe}" "${expected_source}" || die "Research mount could not be made writable"
 verify_mount "${mount_probe}" "write"
 
 [[ -f "${checkpoint}" && ! -L "${checkpoint}" && -r "${checkpoint}" ]] || die "TRANS checkpoint must be a readable regular local file"

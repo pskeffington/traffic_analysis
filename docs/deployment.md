@@ -135,6 +135,14 @@ without a custom pin, the installer reports that it is trusting the operator's
 existing local file. It never downloads weights or stores them in Git. The
 generated unit keeps `ProtectSystem=strict`, `ProtectHome=read-only`, and
 `RestrictAddressFamilies=AF_UNIX` regardless of configured paths.
+Before those checks, the installer runs
+`tools/ensure-research-mount-writable.py` against the configured Research path.
+It verifies the exact mount source and current effective mount, asks `sudo` to
+remount only when that mount is read-only, and confirms write access with a
+temporary file that it removes. It never remounts an unexpected source or
+changes file ownership or permissions. If the mount already reports read-write
+but the probe fails, the installer stops without attempting a privileged
+remount.
 For manual runs, the installer also writes a separate mode-0600 allowlisted
 configuration under the mode-0700 `~/.config/traffic-analysis` directory. The
 manual runner parses this file as data, checks its permissions and ownership,
