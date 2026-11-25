@@ -13,6 +13,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Any, Iterator
 
@@ -319,16 +320,32 @@ def local_engine(server_binary: str | None, model_path: Path,
     temporary = tempfile.TemporaryDirectory(prefix="traffic-analysis-")
     socket_path = Path(temporary.name) / "inference.sock"
     command = [binary, "--model", str(model), "--host", str(socket_path),
-               "--no-webui", "--log-disable", "--ctx-size", "4096",
+               "--no-webui", "--ctx-size", "4096",
                "--parallel", "1", "--reasoning", "off"]
+    stderr_tail = bytearray()
+    stderr_lock = threading.Lock()
+    capture_startup_output = True
+
+    def collect_startup_output(stream: Any) -> None:
+        nonlocal capture_startup_output
+        while chunk := stream.read(4096):
+            with stderr_lock:
+                if capture_startup_output:
+                    stderr_tail.extend(chunk)
+                    if len(stderr_tail) > 8192:
+                        del stderr_tail[:-8192]
+
     try:
-        with open(os.devnull, "wb") as quiet:
-            process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
-                                       stdout=quiet, stderr=quiet, close_fds=True,
-                                       env=server_env)
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   close_fds=True, env=server_env)
     except Exception:
         temporary.cleanup()
         raise
+    stderr_reader = threading.Thread(
+        target=collect_startup_output, args=(process.stdout,), daemon=True
+    )
+    stderr_reader.start()
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 
     def stop_on_sigterm(signum: int, _frame: Any) -> None:
@@ -349,9 +366,18 @@ def local_engine(server_binary: str | None, model_path: Path,
         deadline = time.monotonic() + startup_timeout
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                raise RuntimeError("llama_server_exited_before_ready_check_model_shards_and_memory")
+                stderr_reader.join(timeout=1)
+                with stderr_lock:
+                    detail = bytes(stderr_tail).decode("utf-8", errors="replace").strip()
+                message = "llama_server_exited_before_ready_check_model_shards_and_memory"
+                if detail:
+                    message += ": " + detail
+                raise RuntimeError(message)
             try:
                 _request_json(socket_path, "/health", timeout=2.0)
+                with stderr_lock:
+                    capture_startup_output = False
+                    stderr_tail.clear()
                 break
             except (OSError, http.client.HTTPException, ValueError):
                 time.sleep(0.5)
@@ -376,6 +402,7 @@ def local_engine(server_binary: str | None, model_path: Path,
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+        stderr_reader.join(timeout=1)
         temporary.cleanup()
 
 
