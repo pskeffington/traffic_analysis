@@ -10,6 +10,7 @@ import re
 import sqlite3
 import stat
 from typing import Any
+import unicodedata
 
 from .patterns import (
     classify_call_types,
@@ -236,6 +237,72 @@ def _radio_entity_id(call_id: int, identifier: str) -> str:
     return _digest_id("radio-identifier/v1", str(call_id), identifier)
 
 
+def _transcript_hash(value: str) -> str:
+    normalized = unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _current_trans_review_statuses(source: sqlite3.Connection,
+                                   segment_cols: set[str]) -> dict[tuple[str, str, str], str]:
+    tables = {row[0] for row in source.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "audio_transcript_reviews" not in tables:
+        return {}
+    review_cols = {row[1] for row in source.execute(
+        "PRAGMA table_info(audio_transcript_reviews)")}
+    required = {"source_id", "profile_name", "profile_version", "revision",
+                "transcript_sha256", "review_sha256", "review_status"}
+    if not required.issubset(review_cols) or "content_kind" not in segment_cols:
+        raise ValueError("trans_review_ledger_schema_missing_required_fields")
+    rows = source.execute("""SELECT t.source_id,t.profile_name,t.profile_version,
+        t.text,t.transcript_sha256,t.call_id,s.call_id AS source_call_id,
+        s.started_at,s.sha256 AS audio_sha256,r.review_sha256,r.review_status
+        FROM audio_transcripts t JOIN audio_transcript_reviews r
+          USING(source_id,profile_name,profile_version)
+        JOIN audio_sources s USING(source_id)
+        WHERE r.revision=(SELECT max(r2.revision) FROM audio_transcript_reviews r2
+          WHERE r2.source_id=t.source_id AND r2.profile_name=t.profile_name
+            AND r2.profile_version=t.profile_version)
+        ORDER BY t.source_id,t.profile_name,t.profile_version""").fetchall()
+    statuses: dict[tuple[str, str, str], str] = {}
+    for row in rows:
+        if row["review_status"] not in {"accepted", "rejected"}:
+            raise ValueError("trans_review_state_unknown")
+        if _transcript_hash(row["text"]) != row["transcript_sha256"]:
+            raise ValueError("transcript_text_hash_mismatch")
+        if row["call_id"] != row["source_call_id"]:
+            raise ValueError("transcript_source_call_id_mismatch")
+        segments = source.execute("""SELECT sequence,start_ms,end_ms,text,text_sha256,content_kind
+            FROM audio_transcript_segments WHERE source_id=? AND profile_name=?
+              AND profile_version=? ORDER BY sequence""",
+            (row["source_id"], row["profile_name"], row["profile_version"])).fetchall()
+        material = []
+        for segment in segments:
+            if _transcript_hash(segment["text"]) != segment["text_sha256"]:
+                raise ValueError("trans_segment_hash_mismatch")
+            if segment["content_kind"] not in {"speech", "audible_event", "uncertain"}:
+                raise ValueError("trans_content_kind_unknown")
+            material.append({"sequence": segment["sequence"],
+                             "start_ms": segment["start_ms"],
+                             "end_ms": segment["end_ms"],
+                             "text_sha256": segment["text_sha256"],
+                             "content_kind": segment["content_kind"]})
+        payload = {"contract": "trans-audio-transcript-review/v1",
+                   "source_id": row["source_id"],
+                   "call_id": row["source_call_id"],
+                   "started_at": row["started_at"],
+                   "audio_sha256": row["audio_sha256"],
+                   "transcript_sha256": row["transcript_sha256"],
+                   "segments": material}
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":")).encode("utf-8")
+        review_sha = hashlib.sha256(canonical).hexdigest()
+        if review_sha == row["review_sha256"]:
+            statuses[(row["source_id"], row["profile_name"],
+                      row["profile_version"])] = row["review_status"]
+    return statuses
+
+
 def _read_trans_db(path: Path) -> tuple[sqlite3.Connection, set[str], set[str]]:
     resolved = path.expanduser().resolve(strict=True)
     source = sqlite3.connect(f"{resolved.as_uri()}?mode=ro", uri=True)
@@ -266,6 +333,7 @@ def _read_trans_db(path: Path) -> tuple[sqlite3.Connection, set[str], set[str]]:
 
 def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
     source, transcript_cols, segment_cols = _read_trans_db(trans_path)
+    review_statuses: dict[tuple[str, str, str], str] = {}
     counts = {
         "imported": 0,
         "unchanged": 0,
@@ -280,6 +348,7 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
         "g.confidence_method" if "confidence_method" in segment_cols else "'unavailable'"
     )
     try:
+        review_statuses = _current_trans_review_statuses(source, segment_cols)
         records = source.execute(f"""
           SELECT s.source_id,s.call_id,t.profile_name,t.profile_version,
                  g.sequence,g.start_ms,g.end_ms,s.started_at,g.text,g.text_sha256,
@@ -299,7 +368,10 @@ def import_trans(db: sqlite3.Connection, trans_path: Path) -> dict[str, int]:
             kind = row["content_kind"]
             if kind not in {"speech", "audible_event", "uncertain"}:
                 raise ValueError("trans_content_kind_unknown")
-            source_review = row["review_status"]
+            source_review = review_statuses.get(
+                (row["source_id"], row["profile_name"], row["profile_version"]),
+                row["review_status"],
+            )
             if source_review not in {"pending", "accepted", "corrected", "rejected"}:
                 raise ValueError("trans_review_state_unknown")
             counts["audible_events" if kind == "audible_event" else kind] += 1

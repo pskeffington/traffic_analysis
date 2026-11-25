@@ -65,7 +65,7 @@ The importer reads the documented TRANS fields only. If `content_kind` is absent
 
 The deterministic extractor creates directed `RADIO_CONTACT` candidates only for explicit addressing forms such as `UNIT 12 to DISPATCH`, `DISPATCH, this is UNIT 12`, and `DISPATCH from UNIT 12`. Acknowledgments, readbacks, corrections, wait instructions, status phrases, locations, timing, or co-occurrence do not create edges. See [radio patterns and references](docs/radio_patterns.md).
 
-Every candidate begins pending review. Identifiers are scoped to a TRANS `call_id`; similar labels are never merged, and a radio identifier is not treated as a person or organization. The Arch Notebook view is a read-only projection. The current TRANS interface supplies transcript-level review state, so pending source text cannot be promoted here. Traffic Analysis never fabricates source approval or edits TRANS text.
+Every candidate begins pending review. Identifiers are scoped to a TRANS `call_id`; similar labels are never merged, and a radio identifier is not treated as a person or organization. The Arch Notebook view is a read-only projection. Traffic Analysis can consume TRANS's optional hash-bound `audio_transcript_reviews` ledger; older feeds retain their exported transcript review state. Ledger decisions are used only when Traffic Analysis recomputes a matching digest over source ID, call ID, start time, audio hash, transcript hash, and all segment hashes, times, sequence numbers, and content kinds. Traffic Analysis never fabricates source approval or edits TRANS text.
 
 ## Call type labels
 
