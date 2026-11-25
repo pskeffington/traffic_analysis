@@ -143,6 +143,9 @@ temporary file that it removes. It never remounts an unexpected source or
 changes file ownership or permissions. If the mount already reports read-write
 but the probe fails, the installer stops without attempting a privileged
 remount.
+The `Run Traffic Analysis Now` desktop action runs the same preflight before
+starting a manual cycle, so a read-only mount can be remounted from the
+interactive terminal before the database publisher starts.
 For manual runs, the installer also writes a separate mode-0600 allowlisted
 configuration under the mode-0700 `~/.config/traffic-analysis` directory. The
 manual runner parses this file as data, checks its permissions and ownership,

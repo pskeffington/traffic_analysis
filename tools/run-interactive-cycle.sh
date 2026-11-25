@@ -59,4 +59,12 @@ touch "${run_log}"
 chmod 0600 "${run_log}"
 exec > >(tee -a "${run_log}") 2>&1
 printf '\nTraffic Analysis manual cycle started at %s\n' "$(date --iso-8601=seconds)"
+readonly snapshot="${TRAFFIC_ANALYSIS_SNAPSHOT:-${HOME}/Research.Databases/research.sqlite}"
+readonly expected_source="${TRAFFIC_ANALYSIS_RESEARCH_SOURCE:-//archive.local/research}"
+mount_probe="$(dirname -- "${snapshot}")"
+while [[ ! -e "${mount_probe}" && "${mount_probe}" != "/" ]]; do
+  mount_probe="$(dirname -- "${mount_probe}")"
+done
+python3 "${repo}/tools/ensure-research-mount-writable.py" \
+  "${mount_probe}" "${expected_source}"
 exec /usr/bin/python3 "${repo}/tools/run_corpus_cycle.py"
