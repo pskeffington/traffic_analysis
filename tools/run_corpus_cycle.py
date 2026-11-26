@@ -185,39 +185,6 @@ def restore_snapshot(snapshot: Path, database: Path) -> bool:
         os.close(directory_fd)
 
 
-def verify_legacy_duplicate(legacy: Path, snapshot: Path) -> str | None:
-    if not legacy.exists():
-        return None
-    legacy_info = legacy.lstat()
-    if not legacy.is_file() or legacy_info.st_mode & 0o077:
-        raise RuntimeError("legacy_local_database_is_not_a_private_regular_file")
-    if any(Path(str(legacy) + suffix).exists()
-           for suffix in ("-journal", "-shm", "-wal")):
-        raise RuntimeError("legacy_local_database_has_sqlite_sidecars")
-    require_integrity(legacy)
-    with legacy.open("rb") as source:
-        legacy_digest = hashlib.file_digest(source, "sha256").hexdigest()
-    if legacy_digest != research_file_sha256(snapshot):
-        raise RuntimeError("legacy_local_database_differs_from_research_snapshot")
-    return legacy_digest
-
-
-def remove_verified_legacy_duplicate(legacy: Path, expected_digest: str) -> None:
-    if any(Path(str(legacy) + suffix).exists()
-           for suffix in ("-journal", "-shm", "-wal")):
-        raise RuntimeError("legacy_local_database_has_sqlite_sidecars")
-    with legacy.open("rb") as source:
-        current_digest = hashlib.file_digest(source, "sha256").hexdigest()
-    if current_digest != expected_digest:
-        raise RuntimeError("legacy_local_database_changed_before_removal")
-    legacy.unlink()
-    directory_fd = os.open(legacy.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
-
-
 def inflate_trans_checkpoint(checkpoint: Path, directory: Path) -> Path:
     if not checkpoint.is_file():
         raise RuntimeError("trans_checkpoint_missing")

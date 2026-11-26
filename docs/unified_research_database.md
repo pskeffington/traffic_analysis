@@ -6,9 +6,9 @@ Maintain one active SQLite artifact on the Research volume:
 
 `Research.Databases/research.sqlite`
 
-It will contain TRANS-owned `audio_*` source, transcript, segment, and review
-tables together with Traffic Analysis-owned import, neural proposal, failure,
-candidate, and reporting tables. Raw audio remains in its existing audio
+The deployed database contains TRANS-owned `audio_*` source, transcript,
+segment, and review tables together with Traffic Analysis-owned import, neural
+proposal, failure, candidate, and reporting tables. Raw audio remains in its existing audio
 archive; the database retains source paths, hashes, transcript text, timing,
 and provenance references.
 
@@ -17,9 +17,10 @@ content. Its live SQLite queue remains on tmpfs and its compressed recovery
 checkpoint moves to private local storage. TRANS does not write the Research
 database. Traffic Analysis is the sole publisher of the combined Research
 snapshot: each cycle reads an atomic TRANS checkpoint, restores the existing
-combined snapshot to private local storage, synchronizes immutable TRANS
-tables, imports text read-only into its derived tables, classifies speech, and
-atomically replaces the Research snapshot. This single-writer arrangement
+combined snapshot to private local storage, synchronizes TRANS-owned tables
+(allowing documented source queue-state changes), imports text read-only into
+derived tables, classifies speech, and atomically replaces the Research
+snapshot. This single-writer arrangement
 prevents stale TRANS checkpoints from overwriting newer analysis rows.
 
 For local neural startup failures, Traffic Analysis drains llama-server output
@@ -37,10 +38,12 @@ The migration starts from the verified existing Traffic Analysis snapshot and
 adds the current TRANS tables, data, indexes, and append-only review triggers.
 It preserves all neural proposals, failure records, candidates, review states,
 and existing transcript projections. Conflicting source keys or schema
-versions fail closed. The old TRANS checkpoint and Traffic Analysis snapshot
-remain available off the Research volume until the combined database passes
-integrity, row-count, key, digest, permissions, and view checks. Only then may
-the legacy files be moved into private local rollback storage.
+versions fail closed. The combined database has been published and checked.
+The split legacy Traffic Analysis snapshot remains on the Research volume until
+the retirement helper copies it and the TRANS checkpoint to private local
+rollback storage, verifies the copies, then removes the legacy Research files.
+That guarded retirement has not run; keep the split snapshot as rollback data
+until it does.
 
 No migration step may accept a transcript or neural proposal. New reviews
 continue through the TRANS and analyst review ledgers. Existing source and
@@ -80,8 +83,8 @@ in an unsafe state.
 
 | Milestone | State | Evidence needed |
 |---|---|---|
-| RDB1 — Combined schema and checkpoint sync | Candidate implemented | TRANS-owned source, transcript, segment, and append-only review tables are synchronized by key; same-key content/schema conflicts fail closed. Still requires corpus verification |
-| RDB2 — Service paths and writer ownership | Candidate implemented | TRANS service/helper target a private local checkpoint; Traffic Analysis defaults to the combined Research path. Service install/restart has not been verified |
-| RDB3 — Corpus migration | Combined snapshot published; retirement pending | Corpus migration synchronized 1,010 sources, 1,035 transcripts, and 3,409 segments; existing neural proposals/review rows were unchanged; integrity and foreign-key checks passed. The guarded retirement command is ready but could not run because this session cannot access the user systemd bus |
+| RDB1 — Combined schema and checkpoint sync | Verified on corpus | TRANS-owned source, transcript, segment, and review tables synchronize by key; same-key content/schema conflicts fail closed. Production synchronization and Research database integrity checks passed |
+| RDB2 — Service paths and writer ownership | Verified on host | TRANS checkpoint is read locally; Traffic Analysis defaults to the combined Research path and publishes through a private local working copy. The user service completed a corpus cycle |
+| RDB3 — Corpus migration | Combined snapshot active; legacy retirement pending | Combined Research snapshot and production publication are verified. The split Traffic Analysis snapshot remains on Research as a rollback copy; the guarded retirement workflow has not been run |
 | RDB4 — Human review handoff | Pending analyst action | TRANS source decisions and neural proposal decisions entered through their review ledgers; approved SQL views checked afterward |
 

@@ -1,6 +1,6 @@
 # TRANS SQL input contract
 
-The importer opens the TRANS database with SQLite `mode=ro` and `PRAGMA query_only=ON`. It reads only `audio_sources`, `audio_transcripts`, and `audio_transcript_segments`; this stage does not read audio paths or source media.
+The text importer opens the TRANS database with SQLite `mode=ro` and `PRAGMA query_only=ON`. It reads `audio_sources`, `audio_transcripts`, and `audio_transcript_segments`; the unified Research publisher additionally synchronizes `audio_transcript_reviews` to preserve the TRANS review ledger. Neither stage reads audio paths or source media.
 
 Required TRANS fields:
 

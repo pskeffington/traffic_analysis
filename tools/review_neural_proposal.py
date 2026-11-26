@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
                                           DEFAULT_TRANS_CHECKPOINT)
             snapshot = configured_path("TRAFFIC_ANALYSIS_SNAPSHOT",
                                        DEFAULT_ANALYSIS_SNAPSHOT)
-            verify_research_mount(checkpoint, snapshot)
+            verify_research_mount(snapshot)
             with tempfile.TemporaryDirectory(prefix="traffic-analysis-review-") as temp:
                 workspace = Path(temp)
                 database = workspace / "traffic-analysis.sqlite"

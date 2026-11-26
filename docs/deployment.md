@@ -31,12 +31,13 @@ classifications in a private local working copy, publishes batches of up to 50
 neural attempts (with a 1,000-attempt cycle cap), then removes its temporary
 copy. A new model configuration begins with a one-segment probe. If a cycle
 stops during a batch, the last published Research snapshot retains earlier
-completed work and the next cycle resumes remaining records. If an older
-persistent local database exists, the
-service removes it only after verifying it is byte-identical to the Research
-database and successfully publishing the next Research version. It stops with
-an error and preserves the local database if the Research copy is missing or
-the two databases differ; resolve that migration manually before restarting.
+completed work and the next cycle resumes remaining records. If the canonical
+Research database is missing and a split legacy Research snapshot exists, the
+runner restores that snapshot as input and publishes the canonical database.
+It does not retire the split legacy Research files. Use
+`tools/retire_legacy_research_databases.py` as a separate guarded migration
+after reviewing its rollback and service-state requirements; until then, keep
+the legacy database as a rollback copy.
 The service logs aggregate
 counts and a database digest, not transcript text. The database, working
 directory, and lock use owner-only permissions. Model and source files are

@@ -8,7 +8,7 @@ audio -> TRANS normalization / ASR / timestamped text and event labels
       -> Arch Notebook read-only SQL snapshot and network regression review
 ```
 
-TRANS remains the only audio processor. This package reads TRANS SQLite records in read-only mode and stores text, provenance, event labels, and candidate records in a separate private SQLite database. It does not read audio paths, run models, call network services, or send telemetry. Runtime code uses only the Python standard library.
+TRANS remains the only audio processor. Traffic Analysis reads TRANS SQLite records in read-only mode and never opens audio. Standalone CLI use stores derived records in the private database path you select. The deployed service synchronizes TRANS tables and derived analysis into the single `Research.Databases/research.sqlite` database, using a private local working copy and atomic publication. Optional Qwen analysis runs through a preinstalled local `llama-server` over a private Unix socket; model weights are not downloaded. The package uses the Python standard library at runtime, with no cloud service, telemetry, or IP listener.
 
 ## Install
 
