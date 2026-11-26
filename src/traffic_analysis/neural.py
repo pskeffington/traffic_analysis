@@ -18,7 +18,7 @@ import time
 from typing import Any, Iterator
 
 ENGINE_VERSION = "llama-server-json-v1"
-PROMPT_VERSION = "radio-segment-triage-v4"
+PROMPT_VERSION = "radio-segment-triage-v5"
 LABELS = (
     "fire", "police", "ems", "bus", "school", "traffic", "electrical",
     "public_works", "hazmat", "weather",
@@ -61,16 +61,20 @@ summary. Do not convert notation such as music-note symbols into an audio
 description. Mark a symbols-only segment high uncertainty because there is no
 linguistic content to assess.
 
-Each label must have one exact evidence quote copied from the transcript. The
-quote must support the category, not merely appear in the same segment. Never
-repeat a label. Station mentions must be radio identifiers/callsigns, not
-personal names or locations, with exact evidence quotes. A radio contact is a
-directed call only when the quoted words explicitly address one station from
-another; do not infer a contact from co-occurrence, status, topic, location, or
-timing. The summary must only paraphrase explicit content from transcript
-words; it must not infer audio properties. Return an empty summary when there
-are no words to paraphrase. No confidence number is requested because model
-self-reported confidence is not calibrated."""
+Evidence must be copied character-for-character as a contiguous substring of
+the transcript, including the same spelling, capitalization, punctuation, and
+spacing. Before returning JSON, check that every evidence string occurs exactly
+in the supplied transcript. If no exact supporting substring exists, omit that
+label, station mention, or contact. Each label must have one quote that supports
+the category, not merely appear in the same segment. Never repeat a label.
+Station mentions must be radio identifiers/callsigns, not personal names or
+locations, with exact evidence quotes. A radio contact is a directed call only
+when the quoted words explicitly address one station from another; do not infer
+a contact from co-occurrence, status, topic, location, or timing. The summary
+must only paraphrase explicit content from transcript words; it must not infer
+audio properties. Return an empty summary when there are no words to paraphrase.
+No confidence number is requested because model self-reported confidence is
+not calibrated."""
 
 _OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",

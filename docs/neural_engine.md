@@ -16,7 +16,7 @@ For each speech segment, the model proposes:
 - radio-contact proposals with origin, addressee, and verbatim evidence;
 - a short transcript-grounded summary and qualitative uncertainty (`low`, `medium`, `high`).
 
-The prompt version 4 taxonomy and negative examples are documented in the
+The prompt version 5 evidence-copying rules, taxonomy, and negative examples are documented in the
 [radio call-type annotation guide](call_type_annotation.md). The prompt defines
 when a category is supported and when an empty label list is appropriate. These
 definitions require summaries to stay within the transcript text, including an
