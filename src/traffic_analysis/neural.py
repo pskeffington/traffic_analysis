@@ -320,7 +320,7 @@ def local_engine(server_binary: str | None, model_path: Path,
     temporary = tempfile.TemporaryDirectory(prefix="traffic-analysis-")
     socket_path = Path(temporary.name) / "inference.sock"
     command = [binary, "--model", str(model), "--host", str(socket_path),
-               "--no-webui", "--ctx-size", "4096",
+               "--no-webui", "--ctx-size", "2048",
                "--parallel", "1", "--reasoning", "off"]
     stderr_tail = bytearray()
     stderr_lock = threading.Lock()
