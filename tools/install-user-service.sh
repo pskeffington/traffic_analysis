@@ -313,6 +313,12 @@ mv -Tf -- "${timer_tmp}" "${timer_file}"
 if ! systemctl --user daemon-reload; then
   die "systemd user manager rejected the generated unit; previous unit and config will be restored"
 fi
+for unit in traffic-analysis.service traffic-analysis.timer; do
+  load_state="$(systemctl --user show --property=LoadState --value "${unit}")" || die "cannot inspect loaded state for ${unit}"
+  [[ "${load_state}" == "loaded" ]] || die "systemd did not load ${unit}; previous unit and config will be restored"
+  load_error="$(systemctl --user show --property=LoadError --value "${unit}")" || die "cannot inspect load error for ${unit}"
+  [[ -z "${load_error}" ]] || die "systemd reported a load error for ${unit}; previous unit and config will be restored"
+done
 commit_complete=1
 
 activation_started=1
