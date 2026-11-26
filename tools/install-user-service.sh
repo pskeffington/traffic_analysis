@@ -252,7 +252,6 @@ chmod 0600 "${manual_environment_tmp}"
 
 TRAFFIC_SERVICE_TEMPLATE="${service_template}" \
 TRAFFIC_SERVICE_OUTPUT="${service_tmp}" \
-TRAFFIC_SERVICE_REPOSITORY="${repo}" \
 TRAFFIC_SERVICE_RUNNER="${repo}/tools/run_corpus_cycle.py" \
 TRAFFIC_SERVICE_DATA_HOME="${data_home}" \
 TRAFFIC_SERVICE_SNAPSHOT_DIR="${snapshot_dir}" \
@@ -268,7 +267,6 @@ def unit_quote(value: str) -> str:
 
 template = Path(os.environ["TRAFFIC_SERVICE_TEMPLATE"]).read_text(encoding="utf-8")
 values = {
-    "@WORKING_DIRECTORY@": unit_quote(os.environ["TRAFFIC_SERVICE_REPOSITORY"]),
     "@RUNNER@": unit_quote(os.environ["TRAFFIC_SERVICE_RUNNER"]),
     "@DATA_HOME@": unit_quote(os.environ["TRAFFIC_SERVICE_DATA_HOME"]),
     "@SNAPSHOT_DIR@": unit_quote(os.environ["TRAFFIC_SERVICE_SNAPSHOT_DIR"]),

@@ -3,7 +3,6 @@ Description=Import TRANS speech and run local Traffic Analysis classification
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/github/traffic_analysis
 ExecStart=/usr/bin/python3 %h/github/traffic_analysis/tools/run_corpus_cycle.py
 UMask=0077
 TimeoutStartSec=infinity

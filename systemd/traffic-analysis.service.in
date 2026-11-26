@@ -3,7 +3,6 @@ Description=Import TRANS speech and run local Traffic Analysis classification
 
 [Service]
 Type=oneshot
-WorkingDirectory=@WORKING_DIRECTORY@
 ExecStart=/usr/bin/python3 @RUNNER@
 EnvironmentFile=%h/.config/traffic-analysis/environment
 UMask=0077
